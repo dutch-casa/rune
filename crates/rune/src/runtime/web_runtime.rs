@@ -41,6 +41,111 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    struct ReadonlyForm {
+        edit: crate::TextEdit,
+        default_presses: usize,
+    }
+
+    fn readonly_view(s: &ReadonlyForm, _: &mut Cx<ReadonlyForm>) -> El {
+        crate::col().size(200.0, 100.0)
+            .child(crate::text_input(&s.edit, crate::TextStyle::new(14.0, 400.0))
+                .key("readonly").size(180.0, 32.0).single_line())
+            .child(crate::el().key("default").size(180.0, 32.0).role("button")
+                .focusable(true).default_button()
+                .on_press(|s: &mut ReadonlyForm| s.default_presses += 1))
+    }
+
+    fn focused_readonly() -> Runtime<ReadonlyForm> {
+        let mut rt = Runtime::new(
+            ReadonlyForm { edit: crate::TextEdit::new("read only"), default_presses: 0 },
+            readonly_view, (200.0, 100.0), Env::default(),
+        );
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Tab, mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.focused_key().as_deref(), Some("readonly"));
+        assert!(!rt.state.edit.focused, "focus does not grant edit authority");
+        rt
+    }
+
+    #[test]
+    fn readonly_return_reaches_the_default_button_without_editing() {
+        let mut rt = focused_readonly();
+        rt.key(crate::KeyEvent { key: crate::Key::Text("x".into()), mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.state.edit.text, "read only");
+        rt.key(crate::KeyEvent { key: crate::Key::Enter, mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.state.default_presses, 1, "Return belongs to the default button");
+        assert_eq!(rt.state.edit.text, "read only");
+    }
+
+    #[test]
+    fn readonly_focus_does_not_enable_native_ime() {
+        let rt = focused_readonly();
+        assert!(rt.ime_area.is_none(), "a read-only field cannot accept IME input");
+    }
+
+    #[test]
+    fn readonly_select_all_and_copy_do_not_edit_the_model() {
+        let mut rt = focused_readonly();
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert_eq!(rt.copy_request.take().as_deref(), Some("read only"));
+        assert_eq!(rt.state.edit.text, "read only");
+    }
+
+    #[test]
+    fn readonly_selection_survives_rebuild_and_tracks_text_lifetime() {
+        let mut rt = focused_readonly();
+        let text = "é🦀".repeat(2048);
+        rt.update(|s, _| s.edit.replace_text(text.clone()));
+        rt.frame(0.0);
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.update(|s, _| s.default_presses += 1);
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert_eq!(rt.copy_request.take().as_deref(), Some(text.as_str()));
+        assert_eq!(rt.state.edit.text, text);
+        assert!(!rt.state.edit.focused);
+
+        rt.update(|s, _| s.edit.replace_text(""));
+        rt.frame(0.0);
+        assert!(rt.text_selection().is_none(), "changed text invalidates the old selection");
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert_eq!(rt.copy_request.take().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn readonly_secure_field_never_retains_or_copies_its_text() {
+        fn view(s: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
+            crate::text_input(s, crate::TextStyle::new(14.0, 400.0))
+                .key("secret").size(180.0, 32.0).single_line().secure()
+        }
+        let mut rt = Runtime::new(crate::TextEdit::new("secret 🦀"), view, (200.0, 100.0), Env::default());
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Tab, mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert!(rt.has_secure_focus());
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert!(rt.copy_request.is_none());
+        assert!(rt.text_selection().is_none());
+        assert_eq!(rt.state.text, "secret 🦀");
+    }
+
     #[test]
     fn utf16_replacement_preserves_callbacks_and_rejects_stale_context() {
         fn view(state: &(crate::TextEdit, usize), _: &mut Cx<(crate::TextEdit, usize)>) -> El {

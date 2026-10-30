@@ -117,6 +117,9 @@ Mobile `beforeinput` line breaks use Rune's Enter rules: submit, or Shift/Alt+En
 in a multiline field. A completed touch tap focuses the editor synchronously;
 a pan scrolls instead, with momentum and a damped edge return.
 
+Full-canvas pages allow native pinch zoom while Rune owns one-finger scrolling and dragging.
+Fit-content canvases also allow native vertical page scrolling. Ctrl+wheel zoom is not cancelled.
+
 Secure fields use an `<input type="password">` with autocomplete, autocorrect and spellcheck
 disabled. It receives only new keystrokes and is emptied after every input; the model's
 secret is never mirrored into the DOM. Native focus follows Rune's controls. Tab can leave
@@ -151,17 +154,19 @@ headings, text, links, controls and native editors without replacing canvas rend
 Geometry follows presented layout. Unchanged frames emit no mirror update.
 
 Rune Kit supplies names and checked, expanded and disabled state from its existing component
-values. A `Field` caption names its sole editor; an explicit control label takes precedence.
-Groups with several editors need a name for each editor. Icon-only controls need a label
-or help text that names their action.
+values. A `Field` renders one caption node; its control references that node with
+`aria-labelledby`. An explicit different control name takes precedence. Groups with several
+editors need a name for each editor. Icon-only controls need a label or help text that names
+their action.
 
 `El::fallback_label` replaces an existing name; it does not mean “set only if missing.”
 Use `label_if_missing` to supply a composed caption without replacing an explicit control name.
 
 For custom controls, use `El::role`, `label`, `checked(bool)`, `indeterminate(bool)` and
 `disabled(bool)` as appropriate. Roles do not implement a custom control's keyboard behavior.
-Read-only editors support native selection and copying. Disabled controls remain readable
-but cannot receive input. Browser actions are checked against the current scene.
+Read-only editors support selection and copying without changing the app's model or enabling
+IME. Return can activate the window's default button. Disabled controls remain readable but
+cannot receive input. Browser actions are checked against the current scene.
 
 Inline links follow source order while retaining their action identities. Ordinary web URLs
 remain native anchors. Modal focus returns to the previous control or link on dismissal.

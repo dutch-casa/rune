@@ -760,7 +760,7 @@ impl<S: 'static> Runtime<S> {
                     && f.alphas(f.destination, now, self.reduced_motion).0 > 0.0))
                 .and_then(|_| input_caret(n, r, sc, s, &mut self.input_scroll));
             if let Some((_, area)) = input_caret
-                && n.input.as_ref().is_some_and(|input| !input.edit.is_secure()) { self.ime_area = Some(area); }
+                && n.input.as_ref().is_some_and(|input| input.access.is_some() && !input.edit.is_secure()) { self.ime_area = Some(area); }
             else if n.ime_cursor && self.ime_area.is_none() && self.allowed(i) && !self.subtree_exiting(i) { self.ime_area = Some(app_ime::area(r, s)); }
             let paint_visible = if in_cache {
                 r[2] >= clip[0] - filter_margin - 2.0
@@ -1185,7 +1185,11 @@ impl<S: 'static> Runtime<S> {
                             }
                         }
                         if e.focused && !departing {
-                            let (a, b) = e.range();
+                            let (a, b) = if inp.access.is_none() {
+                                selectable::range_in(&sel_ranges, i).unwrap_or_else(|| e.range())
+                            } else {
+                                e.range()
+                            };
                             if a != b && e.preedit.is_none() {
                                 let (da, db) = e.display_selection_range(a, b);
                                 selectable::push_field_selection(&mut self.instances, layout, da, db,

@@ -1,4 +1,1 @@
-- `El::disabled` excludes controls and their descendants from hit-testing and keyboard focus on every target. Read-only editors can receive focus without becoming editable.
-- Tab visits inline links in source order. Modal dismissal restores the exact previously focused link.
-- Extend the browser's semantic DOM mirror with retained native editors, control state, names and help. Rune Kit supplies metadata through its existing component APIs.
-- Preserve editor identity during composition and virtual unmounts. Reject stale or disabled browser actions, keep canvas rendering and native URL anchors, and allow page zoom in generated HTML.
+- Share disabled, read-only and source-ordered link focus across targets. Expose retained browser controls with Rune Kit names, state and help; preserve editor identity and permit page zoom.

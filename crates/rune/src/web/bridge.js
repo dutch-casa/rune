@@ -72,7 +72,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
     const h = { canvas, a11y, a11yNodes: new Map(), editors: new Map(), parked: null, context: null,
         bounds: new Map(), focused: null, modal: false, keys: new Map(), prefix: `rune-a11y-${++nextRoot}`, nextId: 0,
         copyText: '', listeners: [], syncing: false, disposed: false, embedded, fitHeight,
-        canvasAriaHidden: canvas.getAttribute('aria-hidden'), mirrorActive: false };
+        canvasAriaHidden: canvas.getAttribute('aria-hidden'), canvasTabIndex: canvas.getAttribute('tabindex'), mirrorActive: false };
     h.send = event => {
         const message = JSON.stringify(event);
         if (h.syncing) queueMicrotask(() => { if (!h.disposed) callback(message); });
@@ -155,8 +155,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
     h.listen(canvas, 'pointerdown', event => event.preventDefault(), { capture: true });
     h.listen(canvas, 'keydown', event => { if (!browserShortcut(event)) event.preventDefault(); });
     if (!fitHeight) {
-        h.listen(canvas, 'wheel', event => event.preventDefault(), { passive: false });
-        h.listen(document, 'gesturestart', event => event.preventDefault(), { passive: false });
+        h.listen(canvas, 'wheel', event => { if (!event.ctrlKey) event.preventDefault(); }, { passive: false });
     }
     queueMicrotask(() => {
         if (!h.disposed && !embedded && document.activeElement === document.body) focusElement(h).focus({ preventScroll: true });
@@ -167,6 +166,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
 function tagFor(item) {
     if (item.edit) return item.edit.secure ? 'input' : 'textarea';
     if (buttonRoles.has(item.k)) return 'button';
+    if (item.k === 'label') return 'label';
     if (item.k === 'heading') return `h${item.l || 2}`;
     return item.k === 'text' ? 'p' : 'div';
 }
@@ -301,6 +301,7 @@ export function syncA11y(h, json) {
         if (packet.items) {
             if (!h.mirrorActive) {
                 h.canvas.setAttribute('aria-hidden', 'true');
+                h.canvas.setAttribute('tabindex', '-1');
                 h.mirrorActive = true;
             }
             const next = new Map(packet.items.map(item => [item.p, item]));
@@ -349,7 +350,20 @@ export function syncA11y(h, json) {
                 h.a11yNodes.delete(path);
                 h.bounds.delete(path);
             }
-            if (h.parked) h.editors.set(h.parked.editor.key, h.parked);
+            // Paths may refer to later siblings; resolve only after all retained entries exist.
+            for (const entry of h.a11yNodes.values()) {
+                const label = h.a11yNodes.get(entry.data.labelled_by);
+                const id = label?.data.k === 'label' ? label.element.id : null;
+                attribute(entry.element, 'aria-labelledby', id);
+                if (id) attribute(entry.element, 'aria-label', null);
+            }
+            if (h.parked) {
+                const entry = h.parked;
+                attribute(entry.element, 'aria-labelledby', null);
+                attribute(entry.element, 'aria-label', entry.data.name || entry.data.edit.placeholder
+                    || (entry.editor.secure ? 'Password input' : 'Text input'));
+                h.editors.set(entry.editor.key, entry);
+            }
         }
         for (const [path, rect] of packet.bounds ?? []) h.bounds.set(path, rect);
         const canvasRect = h.canvas.getBoundingClientRect();
@@ -399,6 +413,9 @@ export function destroy(h) {
     h.bounds.clear();
     if (h.mirrorActive && h.canvas.getAttribute('aria-hidden') === 'true') {
         attribute(h.canvas, 'aria-hidden', h.canvasAriaHidden);
+    }
+    if (h.mirrorActive && h.canvas.getAttribute('tabindex') === '-1') {
+        attribute(h.canvas, 'tabindex', h.canvasTabIndex);
     }
     h.a11y.remove();
 }

@@ -16,7 +16,8 @@ impl El {
         self.a11y.checked.get_or_insert_default().indeterminate = indeterminate;
         self
     }
-    /// Disable input without hiding this element or its descendants.
+    /// Exclude this element and its descendants from hit testing and keyboard focus.
+    /// Content stays visible. This does not change the bound editor's value.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.a11y.disabled = disabled;
         self

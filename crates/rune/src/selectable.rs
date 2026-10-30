@@ -228,7 +228,10 @@ pub(super) fn same_keyed_path(a: &str, b: &str) -> bool {
 impl<S: 'static> Runtime<S> {
     pub(super) fn is_selectable(&self, i: usize) -> bool {
         let n = &self.nodes[i];
-        n.input.is_none() && n.text.as_ref().is_some_and(|t| t.selectable && !t.redacted)
+        match n.input.as_deref() {
+            Some(input) => input.access.is_none() && !input.edit.is_secure() && self.focused.as_deref() == Some(n.path.as_str()),
+            None => n.text.as_ref().is_some_and(|t| t.selectable && !t.redacted),
+        }
     }
 
     pub(super) fn live(&self, path: &str) -> Option<usize> {
@@ -236,11 +239,15 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(super) fn content_of(&self, i: usize) -> &str {
-        self.nodes[i].text.as_ref().map_or("", |t| t.content.as_str())
+        self.nodes[i].input.as_ref().map_or_else(
+            || self.nodes[i].text.as_ref().map_or("", |t| t.content.as_str()),
+            |input| input.edit.text.as_str(),
+        )
     }
 
     /// The selection group node `i` is in: its nearest `El::selection_group` ancestor.
     pub(super) fn group_of(&self, i: usize) -> Option<usize> {
+        if self.nodes[i].input.is_some() { return None; }
         std::iter::successors(self.nodes[i].parent, |&p| self.nodes[p].parent).find(|&p| self.nodes[p].selection_group)
     }
 

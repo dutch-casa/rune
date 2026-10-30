@@ -178,7 +178,32 @@ try {
     assert.equal(await visibleCheck.textContent(), 'Visible checkbox');
     assert.equal(await hiddenCheck.getAttribute('aria-label'), 'Hidden checkbox');
     assert.equal(await page.getByRole('group', { name: 'Captioned editor', exact: true }).count(), 0);
-    assert.equal(await mirror.locator('[role="group"]:not([aria-label])').count(), 0);
+    assert.equal(await mirror.getByRole('group', { name: '', exact: true }).count(), 0);
+    const captionFor = async (control, name) => {
+        const relation = await control.evaluate((element, name) => {
+            const id = element.getAttribute('aria-labelledby');
+            const caption = id && document.getElementById(id);
+            const root = element.closest('[data-rune-a11y]');
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let copies = 0;
+            while (walker.nextNode()) if (walker.currentNode.textContent.trim() === name) copies++;
+            return { id, text: caption?.textContent.trim(), copies, override: element.getAttribute('aria-label') };
+        }, name);
+        assert.ok(relation.id, `${name} must reference its caption`);
+        assert.equal(relation.text, name);
+        assert.equal(relation.copies, 1, `${name} must occur once in the semantic DOM`);
+        assert.equal(relation.override, null);
+        return relation.id;
+    };
+    await captionFor(select, 'Fruit');
+    const captionId = await captionFor(editor, 'Captioned editor');
+    const editorId = await editor.getAttribute('id');
+    await editor.evaluate(element => { window.__captionEditor = element; });
+    const namedEditor = page.getByRole('textbox', { name: 'Nickname', exact: true });
+    assert.equal(await namedEditor.getAttribute('aria-labelledby'), null);
+    await captionFor(page.getByRole('group', { name: 'Travel dates', exact: true }), 'Travel dates');
+    assert.equal(await page.getByRole('textbox', { name: 'Start date', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('textbox', { name: 'End date', exact: true }).count(), 1);
     const helpId = await button.getAttribute('aria-describedby');
     assert.ok(helpId);
     assert.equal(await page.locator(`[id="${helpId}"]`).textContent(), 'Button help');
@@ -204,6 +229,105 @@ try {
     assert.equal(await button.getAttribute('aria-describedby'), null);
     if (ax) assert.equal((await axNode(button)).description?.value, undefined);
     assert.equal(await page.locator(`[id="${helpId}"]`).count(), 0);
+    const retainedEditor = page.locator(`[id="${editorId}"]`);
+    assert.equal(await page.locator(`[id="${captionId}"]`).count(), 0);
+    assert.equal(await retainedEditor.getAttribute('aria-labelledby'), null);
+    assert.equal(await retainedEditor.evaluate(element => element === window.__captionEditor), true);
+    await button.evaluate(element => element.click());
+    await editor.waitFor();
+    await captionFor(editor, 'Captioned editor');
+    assert.equal(await editor.evaluate(element => element === window.__captionEditor), true);
+
+    await page.goto(new URL('?input-proof&disputed-review', url).href);
+    await page.getByRole('button', { name: 'Before links', exact: true }).waitFor();
+    const expectFocus = async (role, name) => {
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await page.getByRole(role, { name, exact: true }).evaluate(element => element === document.activeElement),
+            true, `native Tab should reach ${name}`);
+    };
+    await page.getByRole('button', { name: 'Before links', exact: true }).focus();
+    for (const [key, role, name] of [
+        ['Tab', 'link', 'Alpha'], ['Tab', 'link', 'Beta'], ['Tab', 'button', 'After links'],
+        ['Shift+Tab', 'link', 'Beta'], ['Shift+Tab', 'link', 'Alpha'], ['Shift+Tab', 'button', 'Before links'],
+    ]) {
+        await page.keyboard.press(key);
+        await expectFocus(role, name);
+    }
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__disputedActions?.first === 1);
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__disputedActions?.second === 1);
+    assert.equal(await page.evaluate(() => window.__disputedActions.first), 1);
+    const launch = page.getByRole('button', { name: 'Launch', exact: true });
+    await launch.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__disputedActions?.launch === 1);
+    if (ax) {
+        assert.equal((await axNode(launch)).name.value, 'Launch');
+        for (const [role, name] of [['option', 'Option label Option support'], ['tab', 'Tab label Tab support'],
+            ['option', 'Distinct option name'], ['tab', 'Distinct tab name']]) {
+            assert.equal((await axNode(page.getByRole(role, { name, exact: true }))).name.value, name);
+        }
+    }
+    if (engine === 'chromium') {
+        const mobile = await browser.newContext({ viewport: { width: 390, height: 1000 }, hasTouch: true, isMobile: true });
+        try {
+            const touch = await mobile.newPage();
+            await touch.goto(new URL('?input-proof&disputed-review', url).href);
+            await touch.getByRole('button', { name: 'Before links', exact: true }).waitFor();
+            const session = await mobile.newCDPSession(touch);
+            const before = await touch.evaluate(() => visualViewport.scale);
+            await session.send('Input.synthesizePinchGesture', { x: 195, y: 380, scaleFactor: 1.8,
+                relativeSpeed: 400, gestureSourceType: 'touch' });
+            await touch.waitForFunction(before => visualViewport.scale > before + 0.05, before);
+            assert.ok(await touch.evaluate(() => visualViewport.scale) > before + 0.05, 'native touch pinch must zoom');
+        } finally { await mobile.close(); }
+    }
+    await page.evaluate(async () => {
+        const source = performance.getEntriesByType('resource').map(entry => new URL(entry.name))
+            .find(url => url.pathname.endsWith('/src/web/bridge.js'));
+        const bridge = await import(source.href);
+        const input = await import(new URL('text_input.js', source).href);
+        const canvas = document.createElement('canvas');
+        document.body.append(canvas);
+        const events = [];
+        const handle = bridge.mount(canvas, event => events.push(JSON.parse(event)), true, false);
+        const edit = { text: 'abc', base: 0, anchor: 0, focus: 0, secure: false, readonly: false, single: true, placeholder: '' };
+        const packet = { items: [
+            { k: 'label', p: 'caption', r: [0, 0, 100, 20], t: 'Parked field' },
+            { k: 'textbox', p: 'field', r: [0, 20, 100, 30], t: '', name: 'Parked field', labelled_by: 'caption', tab: 0, edit },
+        ], bounds: [], focus: { path: 'field', link: null }, modal: false };
+        bridge.syncA11y(handle, JSON.stringify(packet));
+        input.sync(handle, 'field', 'abc', 0, 0, 0, false);
+        const field = handle.editors.get('field').element;
+        field.focus();
+        window.__parkedProbe = { bridge, handle, canvas, field, packet, events };
+    });
+    const parked = page.getByRole('textbox', { name: 'Parked field', exact: true });
+    assert.equal(await parked.count(), 1);
+    await page.evaluate(() => {
+        const { bridge, handle } = window.__parkedProbe;
+        bridge.syncA11y(handle, JSON.stringify({ items: [], bounds: [], focus: { path: 'field', link: null }, modal: false }));
+    });
+    assert.equal(await parked.evaluate(element => element === window.__parkedProbe.field && document.activeElement === element), true);
+    assert.equal(await parked.getAttribute('aria-labelledby'), null);
+    if (ax) assert.equal((await axNode(parked)).name.value, 'Parked field');
+    await page.evaluate(() => {
+        const { bridge, handle, packet } = window.__parkedProbe;
+        bridge.syncA11y(handle, JSON.stringify(packet));
+    });
+    await captionFor(parked, 'Parked field');
+    assert.equal(await parked.evaluate(element => element === window.__parkedProbe.field), true);
+    await page.evaluate(() => {
+        const { bridge, handle, canvas } = window.__parkedProbe;
+        bridge.destroy(handle);
+        canvas.remove();
+        delete window.__parkedProbe;
+    });
+    console.log(JSON.stringify({ accessibility: 'passed', checks: ['caption references and lifecycle', 'explicit names',
+        'multi-editor groups', 'native link Tab order', 'option and tab content names', 'named pressable', 'native pinch zoom'] }));
     assert.deepEqual(await page.evaluate(() => window.__proof.gpuErrors), []);
     assert.deepEqual(errors.filter(e => !e.includes('404')), []);
     }
