@@ -42,12 +42,18 @@ fn runtime() -> Runtime<State> {
     rt
 }
 
-fn packet(mirror: &mut Mirror, rt: &Runtime<State>) -> Value {
+fn packet<S: 'static>(mirror: &mut Mirror, rt: &Runtime<S>) -> Value {
     serde_json::from_str(mirror.sync(rt, false).expect("changed semantic state")).unwrap()
 }
 
 fn node<'a>(packet: &'a Value, name: &str) -> &'a Value {
     packet["nodes"].as_array().unwrap().iter().find(|n| n["label"] == name).unwrap()
+}
+
+fn editor<'a>(packet: &'a Value, key: &str) -> &'a Value {
+    packet["nodes"].as_array().unwrap().iter().find(|n| {
+        n["edit"].is_object() && n["key"].as_str().is_some_and(|path| path.rsplit('/').next() == Some(key))
+    }).unwrap()
 }
 
 #[test]
@@ -255,6 +261,162 @@ fn empty_shell_names_do_not_mask_editor_names_or_browser_fallbacks() {
     assert_eq!(editors[0]["label"], Value::Null);
     assert_eq!(editors[1]["label"], "Field name");
     assert_eq!(editors[2]["label"], "Control name");
+}
+
+#[test]
+fn composed_names_reach_only_the_right_editor_with_precedence() {
+    let mut rt = Runtime::new(crate::TextEdit::new("value"), |s, _| crate::col()
+        .child(crate::text_input(s, crate::tok::type_::BODY).key("direct")
+            .fallback_label("Direct hint").label_if_missing("Direct caption").size(180.0, 24.0))
+        .child(crate::col().label_if_missing("Wrapped caption")
+            .child(crate::col().child(crate::col()
+                .child(crate::col().role("textbox").fallback_label("Shell hint")
+                    .child(crate::text_input(s, crate::tok::type_::BODY).key("wrapped")
+                        .fallback_label("Editor hint").size(180.0, 24.0))))))
+        .child(crate::col().label_if_missing("Outer caption")
+            .child(crate::col().child(crate::col().label_if_missing("Inner caption").label_if_missing("Ignored caption")
+                .child(crate::text_input(s, crate::tok::type_::BODY).key("nested")
+                    .fallback_label("Nested hint").size(180.0, 24.0)))))
+        .child(crate::col().label_if_missing("Composed shell ancestor")
+            .child(crate::col().role("textbox").label("Explicit shell")
+                .child(crate::text_input(s, crate::tok::type_::BODY).key("shell-explicit")
+                    .fallback_label("Shell editor hint").size(180.0, 24.0))))
+        .child(crate::col().label_if_missing("Composed editor ancestor")
+            .child(crate::col().role("textbox").label("Another shell")
+                .child(crate::text_input(s, crate::tok::type_::BODY).key("editor-explicit")
+                    .label("Explicit editor").size(180.0, 24.0))))
+        .child(crate::col().role("textbox").fallback_label("Outer fallback")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("fallback-editor-explicit")
+                .label("Explicit over fallback").size(180.0, 24.0)))
+        .child(crate::col().role("textbox").fallback_label("Distant hint")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("fallback-nearest")
+                .fallback_label("Nearest hint").size(180.0, 24.0)))
+        .child(crate::col().disabled(true).label_if_missing("Disabled caption")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("disabled-only")
+                .on_edit(|s: &mut crate::TextEdit| s).size(180.0, 24.0)))
+        .child(crate::col().label("Named group")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("group-editor")
+                .fallback_label("Group editor hint").size(180.0, 24.0)))
+        .child(crate::col().label_if_missing("Pair")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("pair-readonly")
+                .fallback_label("Read-only hint").size(180.0, 24.0))
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("pair-disabled")
+                .fallback_label("Disabled hint").size(180.0, 24.0).disabled(true)
+                .on_edit(|s: &mut crate::TextEdit| s))),
+        (400.0, 1200.0), Env::default());
+    rt.frame(0.0);
+    let tree = packet(&mut Mirror::default(), &rt);
+    for (key, expected) in [
+        ("direct", "Direct caption"), ("wrapped", "Wrapped caption"), ("nested", "Inner caption"),
+        ("shell-explicit", "Explicit shell"), ("editor-explicit", "Explicit editor"),
+        ("fallback-editor-explicit", "Explicit over fallback"), ("fallback-nearest", "Nearest hint"),
+        ("disabled-only", "Disabled caption"), ("group-editor", "Group editor hint"),
+        ("pair-readonly", "Read-only hint"), ("pair-disabled", "Disabled hint"),
+    ] {
+        assert_eq!(editor(&tree, key)["label"], expected, "{key}");
+    }
+    assert_eq!(node(&tree, "Named group")["role"], "group");
+    assert_eq!(node(&tree, "Pair")["role"], "group");
+    assert_eq!(editor(&tree, "disabled-only")["disabled"], true);
+    assert_eq!(editor(&tree, "disabled-only")["edit"]["readonly"], false);
+    assert_eq!(editor(&tree, "pair-readonly")["edit"]["readonly"], true);
+    assert_eq!(editor(&tree, "pair-disabled")["edit"]["readonly"], false);
+    assert_eq!(editor(&tree, "pair-disabled")["disabled"], true);
+    assert_eq!(editor(&tree, "pair-disabled")["focusable"], false);
+}
+
+#[test]
+fn empty_names_do_not_replace_nonempty_fallbacks() {
+    let mut rt = Runtime::new(crate::TextEdit::new("value"), |s, _| crate::col()
+        .child(crate::col().role("textbox").fallback_label("Shell fallback").label_if_missing("")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("empty-composed")
+                .label("").size(180.0, 24.0)))
+        .child(crate::col().role("textbox").label("").label_if_missing("Name from empty")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("empty-explicit")
+                .fallback_label("Editor fallback").size(180.0, 24.0)))
+        .child(crate::col().role("textbox").fallback_label("")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("empty-shell")
+                .fallback_label("Editor fallback remains").size(180.0, 24.0)))
+        .child(crate::text_input(s, crate::tok::type_::BODY).key("explicit-root")
+            .label("Explicit root").label_if_missing("Ignored name").size(180.0, 24.0)),
+        (300.0, 300.0), Env::default());
+    rt.frame(0.0);
+    let tree = packet(&mut Mirror::default(), &rt);
+    for (key, expected) in [
+        ("empty-composed", "Shell fallback"), ("empty-explicit", "Name from empty"),
+        ("empty-shell", "Editor fallback remains"), ("explicit-root", "Explicit root"),
+    ] {
+        assert_eq!(editor(&tree, key)["label"], expected, "{key}");
+    }
+}
+
+#[test]
+fn hidden_editors_do_not_make_a_visible_editor_ambiguous() {
+    let mut rt = Runtime::new(crate::TextEdit::new("value"), |s, _| crate::col().label_if_missing("Visible caption")
+        .child(crate::text_input(s, crate::tok::type_::BODY).key("visible")
+            .fallback_label("Visible hint").size(180.0, 24.0))
+        .child(crate::text_input(s, crate::tok::type_::BODY).key("hidden")
+            .fallback_label("Hidden hint").size(180.0, 24.0).inert()),
+        (300.0, 200.0), Env::default());
+    rt.frame(0.0);
+    let tree = packet(&mut Mirror::default(), &rt);
+    assert_eq!(editor(&tree, "visible")["label"], "Visible caption");
+    assert!(!tree["nodes"].as_array().unwrap().iter().any(|n| n["label"] == "Hidden hint"));
+}
+
+#[test]
+fn composed_names_follow_caption_changes_and_restore_fallbacks() {
+    struct CaptionState { edit: crate::TextEdit, caption: &'static str }
+    let mut rt = Runtime::new(CaptionState { edit: crate::TextEdit::new("value"), caption: "Before" }, |s: &CaptionState, _| crate::col()
+        .child(crate::text_input(&s.edit, crate::tok::type_::BODY).key("direct-changing")
+            .fallback_label("Direct fallback").label_if_missing(s.caption).size(180.0, 24.0))
+        .child(crate::col().label_if_missing(s.caption)
+            .child(crate::col().role("textbox").fallback_label("Shell fallback")
+                .child(crate::text_input(&s.edit, crate::tok::type_::BODY).key("wrapped-changing")
+                    .label("").size(180.0, 24.0)))),
+        (300.0, 300.0), Env::default());
+    rt.frame(0.0);
+    let mut mirror = Mirror::default();
+    let first = packet(&mut mirror, &rt);
+    let direct_id = editor(&first, "direct-changing")["id"].clone();
+    let wrapped_id = editor(&first, "wrapped-changing")["id"].clone();
+    assert_eq!(editor(&first, "direct-changing")["label"], "Before");
+    assert_eq!(editor(&first, "wrapped-changing")["label"], "Before");
+    for (caption, direct, wrapped) in [
+        ("After", "After", "After"),
+        ("", "Direct fallback", "Shell fallback"),
+        ("Restored", "Restored", "Restored"),
+    ] {
+        rt.update(|s, _| s.caption = caption);
+        rt.frame(0.0);
+        let tree = packet(&mut mirror, &rt);
+        assert_eq!(editor(&tree, "direct-changing")["id"], direct_id);
+        assert_eq!(editor(&tree, "wrapped-changing")["id"], wrapped_id);
+        assert_eq!(editor(&tree, "direct-changing")["label"], direct);
+        assert_eq!(editor(&tree, "wrapped-changing")["label"], wrapped);
+    }
+}
+
+#[test]
+fn composed_group_names_require_exactly_one_visible_editor() {
+    for count in [0_usize, 1, 2] {
+        let mut rt = Runtime::new(count, |count: &usize, _| {
+            let edit = crate::TextEdit::new("value");
+            let mut group = crate::col().label_if_missing("Collection").size(240.0, 1280.0);
+            for index in 0..*count {
+                group = group.child(crate::text_input(&edit, crate::tok::type_::BODY)
+                    .key(format!("entry-{index}")).fallback_label("Editor hint").size(180.0, 24.0));
+            }
+            group
+        }, (300.0, 1600.0), Env::default());
+        rt.frame(0.0);
+        let tree = packet(&mut Mirror::default(), &rt);
+        assert_eq!(node(&tree, "Collection")["role"], "group");
+        for index in 0..count {
+            let expected = if count == 1 { "Collection" } else { "Editor hint" };
+            assert_eq!(editor(&tree, &format!("entry-{index}"))["label"], expected, "count {count}, editor {index}");
+        }
+    }
 }
 
 #[test]

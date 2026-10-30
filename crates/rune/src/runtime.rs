@@ -1156,6 +1156,8 @@ pub struct Runtime<S: 'static> {
     caught_up: f32,
     slack_dt: f32,
     focused: Option<String>,
+    /// The focused text element's focused link, by declaration index.
+    focused_link: Option<usize>,
     keyboard_focus: bool,
     /// The pointer focused a `focus_highlight` row, so its highlight shows without a key.
     hover_focus: bool,
@@ -1172,10 +1174,10 @@ pub struct Runtime<S: 'static> {
     full_keyboard_access: bool,
     /// `App::tab_visits_controls`: Tab visits every control whatever `full_keyboard_access` says.
     tab_visits_controls: bool,
-    modal_stack: Vec<(String, Option<String>)>,
+    modal_stack: Vec<(String, Option<focus::FocusTarget>)>,
     /// Focus when the running commit began, before a new view's focus request applied: what a
     /// modal that opens in this commit returns focus to.
-    focus_before_commit: Option<String>,
+    focus_before_commit: Option<focus::FocusTarget>,
     /// Focus before the current gesture/commit blurred it, so a scrim press that blurs on
     /// pointer-down and closes its overlay on pointer-up still honours `focus_return`.
     last_focused: Option<String>,
@@ -1546,6 +1548,7 @@ impl<S: 'static> Runtime<S> {
             caught_up: 0.0,
             slack_dt: 0.0,
             focused: None,
+            focused_link: None,
             keyboard_focus: false,
             hover_focus: false,
             typeahead: (String::new(), f64::NEG_INFINITY),
@@ -3802,7 +3805,7 @@ impl<S: 'static> Runtime<S> {
         }
         self.refresh_layout_seen();
         let mut measured = self.measure(tx);
-        self.focus_before_commit = self.focused.clone();
+        self.focus_before_commit = self.focus_target();
         // Settle layout reads first so a field that mounts once a rect is known is in `nodes`.
         measured = self.settle_layout_reads(measured, tx);
         if self.sync_requested_focus(&mut measured.nodes) {

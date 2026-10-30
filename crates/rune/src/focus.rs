@@ -13,6 +13,12 @@ const CLAMPED_ROLES: [&str; 3] = ["list", "tree", "grid"];
 /// AppKit's type-select resets after this long without a key.
 const TYPE_SELECT_PAUSE: f64 = 1.0;
 
+#[derive(Clone)]
+pub(super) struct FocusTarget {
+    path: String,
+    link: Option<usize>,
+}
+
 /// Whether `ev` navigates (Tab, an arrow, Home, End, Page Up or Page Down, unmodified but for
 /// Shift), which shows focus from then on, as CSS `:focus-visible` after keyboard navigation.
 /// Other keys keep whatever showed: Space on a clicked button, Escape, or typing shows no ring.
@@ -84,6 +90,7 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn can_focus(&self, i: usize) -> bool {
         let n = &self.nodes[i];
         (n.focus.enabled || n.input.is_some()) && self.reachable(i)
+            && (n.text.as_ref().is_none_or(|t| t.links.is_empty()) || self.has_focusable_link(i))
     }
     /// Shown, sized, not exiting and not behind a modal.
     fn reachable(&self, i: usize) -> bool {
@@ -95,11 +102,11 @@ impl<S: 'static> Runtime<S> {
         }
         self.allowed(i) && !self.subtree_exiting(i) && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
     }
-    /// Return takes a focused link or row. Browser buttons and links also take Return;
-    /// desktop buttons retain the window's default-button behavior.
+    /// Return takes a focused link or row. Browser buttons, links and comboboxes also take
+    /// Return; desktop buttons retain the window's default-button behavior.
     fn takes_return(&self, i: usize) -> bool {
         self.link_focused(i) || self.nodes[i].focus.highlight.is_some()
-            || (cfg!(target_arch = "wasm32") && matches!(self.nodes[i].role, "button" | "link"))
+            || (cfg!(target_arch = "wasm32") && matches!(self.nodes[i].role, "button" | "link" | "combobox"))
             || self.group(i).is_some_and(|g| LIST_ROLES.contains(&self.nodes[g].role) || VERTICAL_ROLES.contains(&self.nodes[g].role))
     }
     /// Return with no modifiers presses the window's default button (`El::default_button`)
@@ -167,9 +174,30 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn default_focus_ring(&self) -> crate::el::Outline {
         crate::el::Outline { width: 3.0, offset: 0.0, color: self.system_accent.focus(self.env.system_dark) }
     }
-    pub(super) fn set_focus(&mut self, path: Option<String>, keyboard: bool) -> bool {
+    pub(super) fn focus_target(&self) -> Option<FocusTarget> {
+        Some(FocusTarget {
+            path: self.focused.clone()?,
+            link: self.focused_index().and_then(|i| self.focused_link_index(i)),
+        })
+    }
+
+    fn restore_focus_target(&mut self, target: Option<FocusTarget>) {
+        let (path, link) = target.map_or((None, None), |target| (Some(target.path), target.link));
+        self.set_focus(path, self.keyboard_focus);
+        if let Some(i) = self.focused_index()
+            && let Some(k) = link.filter(|&k| self.link_eligible(i, k))
+        {
+            self.focused_link = Some(k);
+        }
+    }
+
+    pub(super) fn set_focus(&mut self, mut path: Option<String>, keyboard: bool) -> bool {
+        let link = path.as_deref().and_then(|p| self.nodes.iter().position(|n| n.path == p))
+            .filter(|&i| self.nodes[i].text.as_ref().is_some_and(|t| !t.links.is_empty()))
+            .map(|i| self.link_focus_target(i));
+        if matches!(link, Some(None)) { path = None; }
         self.input_click.on_focus_change(path.as_deref());
-        if self.focused != path { self.ime_area = None; self.ime_reset = true; self.blur_links(); self.hover_focus = false; }
+        if self.focused != path { self.ime_area = None; self.ime_reset = true; self.focused_link = None; self.hover_focus = false; }
         // Tabbing away or into a field takes the selection's keyboard; a hovered row doesn't.
         if self.focused != path
             && let Some(p) = path.as_deref()
@@ -188,6 +216,7 @@ impl<S: 'static> Runtime<S> {
             changed |= sync_input_focus(input, states!(self), path.as_deref() == Some(p.as_str()));
         }
         self.focused = path;
+        if let Some(Some(k)) = link { self.focused_link = Some(k); }
         if self.focused.is_some() {
             self.last_focused = self.focused.clone();
         }
@@ -421,9 +450,14 @@ impl<S: 'static> Runtime<S> {
             let (modal, restore) = self.modal_stack.pop().unwrap();
             // Focus the closing commit moved elsewhere (a field outside, say) stays there.
             let inside = |f: &str| f.strip_prefix(modal.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
-            if self.focused.as_deref().is_some_and(|f| !inside(f) && self.node(f).is_some()) { continue; }
-            let restore = restore.filter(|p| self.node(p).is_some());
-            self.set_focus(restore, self.keyboard_focus);
+            if self.focused.as_deref().is_some_and(|f| !inside(f) && self.node(f).is_some()) {
+                if restore.as_ref().is_some_and(|target| self.focused.as_deref() == Some(target.path.as_str())) {
+                    self.restore_focus_target(restore);
+                }
+                continue;
+            }
+            let restore = restore.filter(|target| self.node(&target.path).is_some());
+            self.restore_focus_target(restore);
         }
         let Some(i) = self.active_modal() else { return };
         let path = self.nodes[i].path.clone();
@@ -431,7 +465,7 @@ impl<S: 'static> Runtime<S> {
             // A field in the modal that asked for focus took it earlier in this commit; closing
             // returns to what had focus before.
             let inside = self.focused_index().is_some_and(|j| self.allowed(j));
-            let restore = if inside { self.focus_before_commit.clone() } else { self.focused.clone() };
+            let restore = if inside { self.focus_before_commit.clone() } else { self.focus_target() };
             self.modal_stack.push((path.clone(), restore));
             // Cancel any gesture captured before the modal opened.
             self.capture = None;
@@ -1030,6 +1064,27 @@ mod tests {
         press(&mut rt, Key::Enter);
         assert_eq!(log(&mut rt), ["done"], "a modal's default button, not the one behind it");
         assert!(!rt.state.sheet);
+    }
+
+    #[test]
+    fn combobox_return_uses_the_host_focused_control_policy() {
+        fn view(_: &Keys, _: &mut Cx<Keys>) -> El {
+            col().size(200.0, 100.0)
+                .child(button("choice").role("combobox").on_press(|s: &mut Keys| s.log.push("choice")))
+                .child(button("default").default_button().on_press(|s: &mut Keys| s.log.push("default")))
+        }
+        let mut rt = Runtime::new(Keys::default(), view, (200.0, 100.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        press(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt), "choice");
+        press(&mut rt, Key::Enter);
+        press(&mut rt, Key::Text(" ".into()));
+        if cfg!(target_arch = "wasm32") {
+            assert_eq!(rt.state.log, ["choice", "choice"]);
+        } else {
+            assert_eq!(rt.state.log, ["default", "choice"]);
+        }
     }
 
     #[test]

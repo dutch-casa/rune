@@ -7,13 +7,21 @@ pub(crate) struct CheckState {
     pub indeterminate: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LabelSource {
+    Fallback,
+    Composed,
+    #[default]
+    Explicit,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct A11y {
     pub level: Option<u32>,
     pub expanded: Option<bool>,
     pub secure: bool,
     pub disabled: bool,
-    pub fallback_label: bool,
+    pub label_source: LabelSource,
     /// Absent when no checked state has been declared.
     pub checked: Option<CheckState>,
 }
@@ -21,7 +29,7 @@ pub(crate) struct A11y {
 impl El {
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
-        self.a11y.fallback_label = false;
+        self.a11y.label_source = LabelSource::Explicit;
         self
     }
     /// Declare whether this element is checked.
@@ -45,15 +53,16 @@ impl El {
     /// Supply a default name that a composed field can replace.
     pub fn fallback_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
-        self.a11y.fallback_label = true;
+        self.a11y.label_source = LabelSource::Fallback;
         self
     }
 
     /// Supply a composed field's name without replacing an explicit control name.
     pub fn label_if_missing(mut self, label: impl AsRef<str>) -> Self {
-        if self.a11y.fallback_label || self.label.as_deref().is_none_or(str::is_empty) {
-            self.label = Some(label.as_ref().to_owned());
-            self.a11y.fallback_label = false;
+        let label = label.as_ref();
+        if !label.is_empty() && (self.a11y.label_source == LabelSource::Fallback || self.label.as_deref().is_none_or(str::is_empty)) {
+            self.label = Some(label.to_owned());
+            self.a11y.label_source = LabelSource::Composed;
         }
         self
     }

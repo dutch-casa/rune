@@ -1,5 +1,5 @@
 use rune::{Cx, El, Env, Key, KeyEvent, Mods, Runtime, col};
-use rune_kit::{Kit, Select, SelectAppearance, root};
+use rune_kit::{Field, Kit, Select, SelectAppearance, root};
 
 struct State { open: bool, value: String }
 
@@ -12,7 +12,7 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
         .on_close(|s: &mut State| s.open = false)
         .on_choose(|s: &mut State, v, _| { s.value = v.into(); s.open = false; })
         .build(&k, &mut layer);
-    root(col().w_full().h_full().child(select), layer)
+    root(col().w_full().h_full().child(Field::new().label("Fruit").control(select).build(&k)), layer)
 }
 
 fn press(rt: &mut Runtime<State>, key: Key) {
@@ -54,4 +54,26 @@ fn a_select_opens_on_its_value_and_chooses_or_dismisses_from_the_keyboard() {
     rt.pointer_down(x, y); rt.pointer_up(x, y); rt.frame(1.0 / 60.0);
     assert!(!rt.state.open, "a press outside closes it");
     assert_eq!(rt.state.value, "Cherry");
+}
+
+#[test]
+fn field_name_stays_stable_when_keyboard_selection_changes_the_value() {
+    let mut rt = Runtime::new(State { open: false, value: "Banana".into() }, view, (400.0, 300.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let trigger = rt.elements().into_iter().find(|e| e.role == "combobox").unwrap();
+    assert_eq!(trigger.label.as_deref(), Some("Fruit"));
+    assert_eq!(trigger.expanded, Some(false));
+    press(&mut rt, Key::Tab);
+    press(&mut rt, Key::Down);
+    let trigger = rt.elements().into_iter().find(|e| e.role == "combobox").unwrap();
+    assert_eq!(trigger.label.as_deref(), Some("Fruit"));
+    assert_eq!(trigger.expanded, Some(true));
+    press(&mut rt, Key::Text("c".into()));
+    press(&mut rt, Key::Enter);
+    assert_eq!(rt.state.value, "Cherry");
+    let elements = rt.elements();
+    let trigger = elements.iter().find(|e| e.role == "combobox").unwrap();
+    assert_eq!(trigger.label.as_deref(), Some("Fruit"));
+    assert_eq!(trigger.expanded, Some(false));
+    assert!(elements.iter().any(|e| e.text.as_deref() == Some("Cherry")));
 }

@@ -123,10 +123,14 @@ Rune still owns painting, focus policy and accepted state. Browser elements supp
 services and accessibility. Applications do not manage a second DOM tree.
 
 Rune Kit supplies control roles, checked state, declared disabled state and expansion state.
-`Field::label` names its control without replacing an explicit control name.
+`Field::label` names its direct control or a sole editor inside layout wrappers.
+Explicit control names take precedence over composed captions, then fallback names.
 `TextField::new` supplies the editor's name. A container with multiple editors keeps its
 group name; each editor needs its own name. Textbox shells retain padding-click behavior
 without exposing another editable textbox.
+
+A select keeps its field name when its selected value changes; the browser exposes the
+selected text separately as its value.
 An editor without a nonempty name or placeholder uses the generic name "Text input".
 Supply a meaningful label when its purpose is not clear from the surrounding content.
 
@@ -139,8 +143,12 @@ declared checked value. A control with neither method has no checked state.
 editor focus. Missing handlers alone do not declare a disabled control.
 
 Inline `El::link` spans expose their existing names and actions in source order, without
-repeating the surrounding prose. Browser focus uses Rune's current modal scope and focus
-groups. Tab can leave a nonmodal app. A modal contains Tab and restores its opener on
+repeating the surrounding prose. Keyboard traversal uses that same order even when links
+were declared in a different order. Empty, invalid and fully elided ranges are not focus
+targets.
+
+Browser focus uses Rune's current modal scope and focus groups. Tab can leave a
+nonmodal app. A modal contains Tab and restores its opener, including its focused link, on
 close. Read-only editors participate in Tab navigation and retain native selection and
 copy without granting edit access.
 

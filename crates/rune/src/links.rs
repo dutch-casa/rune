@@ -1,15 +1,13 @@
 //! Pressable spans in text (`El::link`). Each link's line boxes come from the shaped layout,
 //! so only its glyphs take the pointer. The text element holds focus for its links and
-//! `LinkState::focus` says which one; links are reported to tools as their own elements.
+//! `Runtime::focused_link` says which one; links are reported to tools as their own elements.
 use super::*;
-use crate::text::LinkPaint;
+use crate::text::{Link, LinkPaint};
 
 #[derive(Default)]
 pub(super) struct LinkState {
     /// The link a pointer press began on: (text path, link index).
     press: Option<(String, usize)>,
-    /// The focused text element's focused link.
-    focus: Option<usize>,
     /// The link a secondary press began on, in the captured text.
     secondary: Option<usize>,
 }
@@ -45,6 +43,28 @@ pub(super) fn origin(n: &Node, spec: &TextSpec, layout: &Layout<Ink>, rect: [f32
 fn drawn(n: &Node, a: u32, b: u32) -> (u32, u32) {
     let (a, b) = n.elided.map_or((a as usize, b as usize), |e| e.mark(a as usize, b as usize, true));
     (a as u32, b as u32)
+}
+
+/// Reading order uses source offsets; the declaration index remains the link's identity.
+fn link_order(index: usize, link: &Link) -> (u32, usize) { (link.start, index) }
+
+/// A link must name authored text and retain drawn bytes before it can have geometry.
+fn link_range(n: &Node, spec: &TextSpec, link: &Link) -> Option<(u32, u32)> {
+    if link.start >= link.end
+        || spec.content.get(link.start as usize..link.end as usize).is_none()
+        || spec.source_slice(link.start, link.end).is_none_or(str::is_empty)
+    {
+        return None;
+    }
+    let (a, b) = drawn(n, link.start, link.end);
+    (a < b && (b as usize) <= layout_len(n, spec)).then_some((a, b))
+}
+
+/// Tests whether the same range used by `boxes` produces a box, without collecting boxes.
+fn link_has_box(n: &Node, spec: &TextSpec, link: &Link) -> bool {
+    let Some(layout) = &n.text_layout else { return false };
+    let Some((a, b)) = link_range(n, spec, link) else { return false };
+    crate::text::range_has_boxes(layout, a as usize, b as usize)
 }
 
 /// The byte length of node `n`'s drawn text.
@@ -160,7 +180,7 @@ impl<S: 'static> Runtime<S> {
         let px = s / z.max(1e-4);
         let mut out = Vec::new();
         for (k, l) in spec.links.iter().enumerate() {
-            let (a, b) = drawn(n, l.start, l.end);
+            let Some((a, b)) = link_range(n, spec, l) else { continue };
             for (bb, _) in boxes(layout, layout_len(n, spec), a, b) {
                 out.push((k, [ox + bb.x0 as f32 / px, oy + bb.y0 as f32 / px, ox + bb.x1 as f32 / px, oy + bb.y1 as f32 / px]));
             }
@@ -195,7 +215,7 @@ impl<S: 'static> Runtime<S> {
             .and_then(|(x, y)| self.link_at(i, x, y));
         let held = self.capture.as_ref().is_some_and(|(p, _)| p == path) && self.capture_inside;
         let pressed = self.links.press.as_ref().filter(|(p, k)| held && p == path && hovered == Some(*k)).map(|(_, k)| *k);
-        let focused = self.links.focus.filter(|_| self.keyboard_focus && self.focused.as_deref() == Some(path));
+        let focused = self.focused_link.filter(|_| self.keyboard_focus && self.focused.as_deref() == Some(path));
         (hovered, pressed, focused)
     }
 
@@ -283,51 +303,77 @@ impl<S: 'static> Runtime<S> {
         })
     }
 
-    fn link_count(&self, i: usize) -> usize {
-        self.nodes[i].text.as_ref().map_or(0, |t| t.links.len())
+    /// Finds the nearest eligible link in `(source start, declaration index)` order.
+    /// Each scan uses constant space and, in the worst case, inspects the layout for
+    /// every link. This avoids a retained ordering cache and allocations on Tab.
+    fn adjacent_link(&self, i: usize, from: Option<usize>, backward: bool) -> Option<usize> {
+        let n = &self.nodes[i];
+        let spec = n.text.as_ref()?;
+        let edge = match from {
+            Some(k) => Some(link_order(k, spec.links.get(k)?)),
+            None => None,
+        };
+        let mut best = None;
+        for (k, link) in spec.links.iter().enumerate() {
+            let key = link_order(k, link);
+            if edge.is_some_and(|edge| if backward { key >= edge } else { key <= edge })
+                || best.is_some_and(|best| if backward { key <= best } else { key >= best })
+            {
+                continue;
+            }
+            if link_has_box(n, spec, link) { best = Some(key); }
+        }
+        best.map(|(_, k)| k)
     }
 
-    /// Tab inside the focused text's links: moves to its next (or previous) link and returns
-    /// true, or false at its last (first) link so Tab leaves it.
+    pub(super) fn has_focusable_link(&self, i: usize) -> bool {
+        let n = &self.nodes[i];
+        n.text.as_ref().is_some_and(|spec| spec.links.iter().any(|link| link_has_box(n, spec, link)))
+    }
+
+    pub(super) fn link_eligible(&self, i: usize, k: usize) -> bool {
+        let n = &self.nodes[i];
+        n.text.as_ref().is_some_and(|spec| spec.links.get(k).is_some_and(|link| link_has_box(n, spec, link)))
+    }
+
+    pub(super) fn link_focus_target(&self, i: usize) -> Option<usize> {
+        self.focused_link_index(i).or_else(|| self.adjacent_link(i, None, false))
+    }
+
+    /// Tab inside the focused text's links, or return false at its edge.
     pub(super) fn link_tab(&mut self, backward: bool) -> bool {
         let Some(i) = self.focused_index() else { return false };
-        let count = self.link_count(i);
-        let Some(k) = self.links.focus.filter(|_| count > 0) else { return false };
-        let next = if backward { k.checked_sub(1) } else { Some(k + 1).filter(|&j| j < count) };
-        if next.is_some() { self.links.focus = next; }
+        let Some(k) = self.focused_link_index(i) else { return false };
+        let next = self.adjacent_link(i, Some(k), backward);
+        if next.is_some() { self.focused_link = next; }
         next.is_some()
     }
 
     /// Tab focused node `i`: start at its first link, or its last going backward.
     pub(super) fn enter_links(&mut self, i: usize, backward: bool) {
-        let count = self.link_count(i);
-        self.links.focus = (count > 0).then(|| if backward { count - 1 } else { 0 });
-    }
-
-    pub(super) fn blur_links(&mut self) {
-        self.links.focus = None;
+        self.focused_link = self.adjacent_link(i, None, backward);
     }
 
     /// Whether focused node `i` has a link focused, which takes Return.
     pub(super) fn link_focused(&self, i: usize) -> bool {
-        self.links.focus.is_some_and(|k| k < self.link_count(i))
+        self.focused_link.is_some_and(|k| self.link_eligible(i, k))
     }
 
     /// The id of focused node `i`'s focused link, which tools list as its own element.
     pub(super) fn focused_link_id(&self, i: usize) -> Option<String> {
-        let k = self.links.focus?;
+        let k = self.focused_link_index(i)?;
         self.nodes[i].text.as_ref()?.links.get(k).map(|l| l.id.clone())
     }
 
     pub(super) fn focused_link_index(&self, i: usize) -> Option<usize> {
-        self.links.focus.filter(|&k| self.focused.as_deref() == Some(&self.nodes[i].path) && k < self.link_count(i))
+        self.focused_link.filter(|&k| self.focused.as_deref() == Some(&self.nodes[i].path) && self.link_eligible(i, k))
     }
 
     #[cfg(any(target_arch = "wasm32", test))]
     pub(super) fn focus_link(&mut self, i: usize, k: usize) -> bool {
-        if k >= self.link_count(i) || !self.can_focus(i) { return false; }
-        let changed = self.set_focus(Some(self.nodes[i].path.clone()), true) || self.links.focus != Some(k);
-        self.links.focus = Some(k);
+        if !self.can_focus(i) || !self.link_eligible(i, k) { return false; }
+        let changed = self.set_focus(Some(self.nodes[i].path.clone()), true) || self.focused_link != Some(k);
+        self.focused_link = Some(k);
         self.dirty |= changed;
         self.pending.scroll_to.push((None, self.nodes[i].path.clone()));
         true
@@ -336,7 +382,7 @@ impl<S: 'static> Runtime<S> {
     /// The Menu key on focused node `i`'s focused link: its `on_link_secondary`, at the
     /// bottom-left of its first line box.
     pub(super) fn focused_link_menu(&mut self, i: usize, tx: &mut Tx) -> bool {
-        let Some(k) = self.links.focus.filter(|&k| k < self.link_count(i)) else { return false };
+        let Some(k) = self.focused_link_index(i) else { return false };
         if self.nodes[i].text.as_ref().is_none_or(|t| t.on_link_secondary.is_none()) { return false; }
         let Some((_, r)) = self.link_boxes(i, self.drawn_box(i)).into_iter().find(|(j, _)| *j == k) else { return false };
         let path = self.nodes[i].path.clone();
@@ -346,7 +392,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Enter or Space on a focused link presses it.
     pub(super) fn link_key(&mut self, i: usize, tx: &mut Tx) -> bool {
-        let Some(k) = self.links.focus.filter(|&k| k < self.link_count(i)) else { return false };
+        let Some(k) = self.focused_link_index(i) else { return false };
         let path = self.nodes[i].path.clone();
         self.press_link(&path, k, tx);
         true
@@ -355,11 +401,17 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn visit_link_elements<'a>(&'a self, i: usize, visible: [f32; 4], mut visit: impl FnMut(LinkElement<'a>)) {
         let n = &self.nodes[i];
         let Some(spec) = n.text.as_ref().filter(|t| !t.links.is_empty()) else { return };
-        let boxes = self.link_boxes(i, self.drawn_box(i));
+        let mut boxes = self.link_boxes(i, self.drawn_box(i));
+        boxes.sort_unstable_by_key(|(k, _)| link_order(*k, &spec.links[*k]));
         let (hovered, pressed, _) = self.link_states(i);
         let focused = self.focused_link_index(i);
-        for (k, link) in spec.links.iter().enumerate() {
-            let Some(r) = union(k, &boxes) else { continue };
+        let mut boxes = boxes.into_iter().peekable();
+        while let Some((k, mut r)) = boxes.next() {
+            while boxes.peek().is_some_and(|(next, _)| *next == k) {
+                let (_, part) = boxes.next().expect("the next link box was just observed");
+                r = [r[0].min(part[0]), r[1].min(part[1]), r[2].max(part[2]), r[3].max(part[3])];
+            }
+            let link = &spec.links[k];
             let (x0, y0) = (r[0].max(visible[0]), r[1].max(visible[1]));
             let (x1, y1) = (r[2].min(visible[0] + visible[2]), r[3].min(visible[1] + visible[3]));
             let text = (!n.is_secure()).then(|| spec.source_slice(link.start, link.end)).flatten();
@@ -526,5 +578,298 @@ impl<S: 'static> Runtime<S> {
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Key, KeyEvent, Link, Mods, PillStyle, col, el, text};
+
+    fn key<S: 'static>(rt: &mut Runtime<S>, key: Key, shift: bool) {
+        rt.key(KeyEvent { key, mods: Mods { shift, ..Mods::default() } });
+        rt.frame(0.0);
+    }
+
+    fn focused<S: 'static>(rt: &Runtime<S>) -> Option<String> {
+        rt.elements().into_iter().find(|e| e.focused).and_then(|e| e.key)
+    }
+
+    fn button(key: &str) -> El {
+        el().key(key).size(50.0, 24.0).focusable(true).role("button")
+    }
+
+    #[derive(Default)]
+    struct Order { pilled: bool, activated: Vec<String> }
+
+    fn order_view(s: &Order, _: &mut Cx<Order>) -> El {
+        let mut prose = text("First Second Third").key("prose")
+            .link(Link::new(13..18, "third"))
+            .link(Link::new(0..5, "first-a"))
+            .link(Link::new(6..12, "second"))
+            .link(Link::new(0..3, "first-b"))
+            .on_link(|s: &mut Order, id, _| s.activated.push(id.to_owned()));
+        if s.pilled { prose = prose.pill(0..5, PillStyle::new()); }
+        col().size(300.0, 150.0).child(button("before")).child(prose).child(button("after"))
+    }
+
+    #[test]
+    fn links_are_visited_and_navigated_in_source_order_with_original_action_ids() {
+        for pilled in [false, true] {
+            let mut rt = Runtime::new(Order { pilled, ..Order::default() }, order_view, (300.0, 150.0), Env::new(true, 1.0));
+            rt.set_tab_visits_controls(true);
+            rt.frame(0.0);
+            let links: Vec<_> = rt.elements().into_iter().filter(|e| e.path.contains("#link-"))
+                .map(|e| (e.key.unwrap(), e.path)).collect();
+            assert_eq!(links.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>(), ["first-a", "first-b", "second", "third"]);
+            for ((_, path), index) in links.iter().zip([1, 3, 2, 0]) {
+                assert!(path.ends_with(&format!("#link-{index}")));
+            }
+
+            key(&mut rt, Key::Tab, false);
+            assert_eq!(focused(&rt).as_deref(), Some("before"));
+            for (name, activation) in [
+                ("first-a", Key::Enter), ("first-b", Key::Text(" ".into())),
+                ("second", Key::Enter), ("third", Key::Text(" ".into())),
+            ] {
+                key(&mut rt, Key::Tab, false);
+                assert_eq!(focused(&rt).as_deref(), Some(name));
+                key(&mut rt, activation, false);
+            }
+            assert_eq!(rt.state.activated, ["first-a", "first-b", "second", "third"]);
+            key(&mut rt, Key::Tab, false);
+            assert_eq!(focused(&rt).as_deref(), Some("after"));
+            for name in ["third", "second", "first-b", "first-a", "before"] {
+                key(&mut rt, Key::Tab, true);
+                assert_eq!(focused(&rt).as_deref(), Some(name));
+            }
+        }
+    }
+
+    #[test]
+    fn focus_admission_matches_exposed_geometry_for_controls_and_newlines() {
+        fn view(pilled: &bool, _: &mut Cx<bool>) -> El {
+            let mut prose = text("A\u{200b}\nB").key("prose").w(150.0).wrap()
+                .link(Link::new(4..5, "newline"))
+                .link(Link::new(1..4, "zero-width"))
+                .link(Link::new(0..1, "a"))
+                .link(Link::new(5..6, "b"))
+                .link(Link::new(6..6, "empty"));
+            if *pilled { prose = prose.pill(0..1, PillStyle::new()); }
+            col().size(200.0, 100.0).child(prose)
+        }
+        for pilled in [false, true] {
+            let mut rt = Runtime::new(pilled, view, (200.0, 100.0), Env::new(true, 1.0));
+            rt.frame(0.0);
+            let prose = rt.nodes.iter().position(|n| n.key.as_deref() == Some("prose")).unwrap();
+            let elements = rt.elements();
+            for (index, name) in ["newline", "zero-width", "a", "b", "empty"].into_iter().enumerate() {
+                let exposed = elements.iter().any(|e| e.key.as_deref() == Some(name) && e.path.ends_with(&format!("#link-{index}")));
+                assert_eq!(rt.focus_link(prose, index), exposed, "{name}, pilled: {pilled}");
+                if exposed {
+                    rt.frame(0.0);
+                    assert_eq!(focused(&rt).as_deref(), Some(name));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn empty_and_invalid_ranges_have_no_semantic_or_keyboard_target() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            let (start, end) = (8, 3);
+            col().size(300.0, 180.0)
+                .child(button("before"))
+                .child(text("no links"))
+                .child(text("empty").key("empty").link(Link::new(1..1, "empty-link")))
+                .child(text("é alpha").key("prose")
+                    .link(Link::new(1..2, "split-codepoint"))
+                    .link(Link::new(20..25, "out-of-range"))
+                    .link(Link::new(start..end, "reversed"))
+                    .link(Link::new(3..8, "alpha"))
+                    .link(Link::new(0..2, "accent")))
+                .child(text("only").key("single").link(Link::new(0..4, "only-link")))
+                .child(button("after"))
+        }
+        let mut rt = Runtime::new((), view, (300.0, 180.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        let links: Vec<_> = rt.elements().into_iter().filter(|e| e.path.contains("#link-"))
+            .map(|e| e.key.unwrap()).collect();
+        assert_eq!(links, ["accent", "alpha", "only-link"]);
+        let empty = rt.nodes.iter().position(|n| n.key.as_deref() == Some("empty")).unwrap();
+        let prose = rt.nodes.iter().position(|n| n.key.as_deref() == Some("prose")).unwrap();
+        assert!(!rt.focus_link(empty, 0));
+        for index in 0..3 { assert!(!rt.focus_link(prose, index)); }
+        for name in ["before", "accent", "alpha", "only-link", "after"] {
+            key(&mut rt, Key::Tab, false);
+            assert_eq!(focused(&rt).as_deref(), Some(name));
+        }
+        for name in ["only-link", "alpha", "accent", "before"] {
+            key(&mut rt, Key::Tab, true);
+            assert_eq!(focused(&rt).as_deref(), Some(name));
+        }
+    }
+
+    #[test]
+    fn fully_elided_links_cannot_take_focus() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            col().size(300.0, 100.0).child(button("before"))
+                .child(text("A long line with hidden suffix").key("prose").w(55.0).truncate()
+                    .link(Link::new(22..28, "hidden"))
+                    .link(Link::new(0..1, "shown")))
+                .child(button("after"))
+        }
+        let mut rt = Runtime::new((), view, (300.0, 100.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        let links: Vec<_> = rt.elements().into_iter().filter(|e| e.path.contains("#link-"))
+            .map(|e| e.key.unwrap()).collect();
+        assert_eq!(links, ["shown"]);
+        let prose = rt.nodes.iter().position(|n| n.key.as_deref() == Some("prose")).unwrap();
+        assert!(!rt.focus_link(prose, 0));
+        for name in ["before", "shown", "after"] {
+            key(&mut rt, Key::Tab, false);
+            assert_eq!(focused(&rt).as_deref(), Some(name));
+        }
+        key(&mut rt, Key::Tab, true);
+        assert_eq!(focused(&rt).as_deref(), Some("shown"));
+    }
+
+    #[test]
+    fn a_link_that_becomes_elided_cannot_keep_stale_focus() {
+        struct View { narrow: bool, show_first: bool }
+        fn view(s: &View, _: &mut Cx<View>) -> El {
+            let mut prose = text("A long line with hidden suffix").key("prose")
+                .w(if s.narrow { 55.0 } else { 250.0 }).truncate()
+                .link(Link::new(22..28, "hidden"));
+            if s.show_first { prose = prose.link(Link::new(0..1, "shown")); }
+            col().size(300.0, 100.0).child(prose)
+        }
+        let mut rt = Runtime::new(View { narrow: false, show_first: true }, view, (300.0, 100.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        key(&mut rt, Key::Tab, false);
+        assert_eq!(focused(&rt).as_deref(), Some("shown"));
+        key(&mut rt, Key::Tab, false);
+        assert_eq!(focused(&rt).as_deref(), Some("hidden"));
+        rt.update(|s, _| s.narrow = true);
+        rt.frame(0.0);
+        assert_eq!(focused(&rt).as_deref(), Some("shown"));
+        assert!(!rt.elements().iter().any(|e| e.key.as_deref() == Some("hidden")));
+        rt.update(|s, _| s.show_first = false);
+        rt.frame(0.0);
+        assert_eq!(focused(&rt), None);
+    }
+
+    #[derive(Default)]
+    struct Modal {
+        open: bool,
+        request_editor: bool,
+        return_anchor: bool,
+        editor: crate::TextEdit,
+        activated: Vec<String>,
+    }
+
+    fn modal_view(s: &Modal, _: &mut Cx<Modal>) -> El {
+        let opener = text("First Second").key("outside")
+            .link(Link::new(6..12, "outside-second"))
+            .link(Link::new(0..5, "outside-first"))
+            .on_link(|s: &mut Modal, id, _| {
+                s.activated.push(id.to_owned());
+                s.open = true;
+                s.editor.focused = s.request_editor;
+            });
+        let mut root = col().size(300.0, 200.0).child(opener);
+        if s.open {
+            let first = if s.request_editor {
+                crate::text_input(&s.editor, crate::TextStyle::new(14.0, 400.0)).key("editor")
+                    .size(100.0, 24.0).on_edit(|s: &mut Modal| &mut s.editor)
+            } else {
+                text("First Second").key("inside")
+                    .link(Link::new(6..12, "inside-second"))
+                    .link(Link::new(0..5, "inside-first"))
+                    .on_link(|s: &mut Modal, id, _| s.activated.push(id.to_owned()))
+            };
+            let mut modal = col().key("modal").absolute(20.0, 40.0).size(200.0, 100.0)
+                .modal(true, |s: &mut Modal| s.open = false);
+            if s.return_anchor { modal = modal.focus_return("outside"); }
+            root = root.child(modal.child(first).child(button("close").on_press(|s: &mut Modal| s.open = false)));
+        }
+        root
+    }
+
+    #[test]
+    fn modal_entry_wrap_and_restore_keep_real_link_identity() {
+        for (request_editor, return_anchor) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut rt = Runtime::new(Modal { request_editor, return_anchor, ..Modal::default() }, modal_view, (300.0, 200.0), Env::new(true, 1.0));
+            rt.set_tab_visits_controls(true);
+            rt.frame(0.0);
+            key(&mut rt, Key::Tab, false);
+            assert_eq!(focused(&rt).as_deref(), Some("outside-first"));
+            key(&mut rt, Key::Tab, false);
+            assert_eq!(focused(&rt).as_deref(), Some("outside-second"));
+            key(&mut rt, Key::Enter, false);
+            if request_editor {
+                assert_eq!(focused(&rt).as_deref(), Some("editor"));
+            } else {
+                assert_eq!(focused(&rt).as_deref(), Some("inside-first"));
+                for (shift, name) in [(true, "close"), (false, "inside-first"), (false, "inside-second")] {
+                    key(&mut rt, Key::Tab, shift);
+                    assert_eq!(focused(&rt).as_deref(), Some(name));
+                }
+                key(&mut rt, Key::Enter, false);
+                assert_eq!(rt.state.activated, ["outside-second", "inside-second"]);
+                for (shift, name) in [(false, "close"), (false, "inside-first"), (true, "close")] {
+                    key(&mut rt, Key::Tab, shift);
+                    assert_eq!(focused(&rt).as_deref(), Some(name));
+                }
+            }
+            key(&mut rt, Key::Escape, false);
+            assert!(!rt.state.open);
+            assert_eq!(focused(&rt).as_deref(), Some("outside-second"));
+        }
+    }
+
+    #[test]
+    fn nested_modals_restore_the_link_focused_at_each_level() {
+        #[derive(Default)]
+        struct Nested { depth: u8 }
+        fn view(s: &Nested, _: &mut Cx<Nested>) -> El {
+            let outside = text("First Second").key("outside")
+                .link(Link::new(6..12, "outside-second"))
+                .link(Link::new(0..5, "outside-first"))
+                .on_link(|s: &mut Nested, _, _| s.depth = 1);
+            let mut root = col().size(300.0, 200.0).child(outside);
+            if s.depth >= 1 {
+                root = root.child(col().key("outer-modal").absolute(20.0, 40.0).size(200.0, 100.0)
+                    .modal(true, |s: &mut Nested| s.depth = 0)
+                    .child(text("First Second").key("outer-text")
+                        .link(Link::new(6..12, "outer-second"))
+                        .link(Link::new(0..5, "outer-first"))
+                        .on_link(|s: &mut Nested, _, _| s.depth = 2)));
+            }
+            if s.depth >= 2 {
+                root = root.child(col().key("inner-modal").absolute(40.0, 60.0).size(100.0, 50.0)
+                    .modal(true, |s: &mut Nested| s.depth = 1).child(button("inner")));
+            }
+            root
+        }
+        let mut rt = Runtime::new(Nested::default(), view, (300.0, 200.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        key(&mut rt, Key::Tab, false);
+        key(&mut rt, Key::Tab, false);
+        assert_eq!(focused(&rt).as_deref(), Some("outside-second"));
+        key(&mut rt, Key::Enter, false);
+        assert_eq!(focused(&rt).as_deref(), Some("outer-first"));
+        key(&mut rt, Key::Tab, false);
+        assert_eq!(focused(&rt).as_deref(), Some("outer-second"));
+        key(&mut rt, Key::Enter, false);
+        assert_eq!(focused(&rt).as_deref(), Some("inner"));
+        key(&mut rt, Key::Escape, false);
+        assert_eq!(focused(&rt).as_deref(), Some("outer-second"));
+        key(&mut rt, Key::Escape, false);
+        assert_eq!(focused(&rt).as_deref(), Some("outside-second"));
     }
 }

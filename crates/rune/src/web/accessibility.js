@@ -4,6 +4,7 @@ import { createEditor } from './text_input.js';
 const roles = new Set(('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem').split(' '));
 const selected = new Set(['option', 'tab', 'treeitem', 'row', 'gridcell']);
 const unnamed = new Set(['none', 'presentation', 'paragraph', 'code', 'emphasis', 'strong', 'subscript', 'superscript', 'term', 'caption', 'deletion', 'insertion']);
+const buttons = new Set(['button', 'combobox']);
 let nextRoot = 0;
 
 function attribute(element, name, value) {
@@ -85,7 +86,7 @@ export function mountAccessibility(h) {
 
 function create(h, data) {
     const editor = data.edit ? createEditor(h, data.key, data.edit.secure) : null;
-    const tag = data.role === 'button' ? 'button' : 'div';
+    const tag = buttons.has(data.role) ? 'button' : 'div';
     const element = editor?.field ?? document.createElement(tag);
     if (tag === 'button' && !editor) element.type = 'button';
     element.id = `${h.prefix}-${++h.nextId}`;
@@ -99,7 +100,7 @@ function create(h, data) {
 function compatible(entry, data) {
     if (!data || !!entry.editor !== !!data.edit) return false;
     return entry.editor ? entry.editor.key === data.key && entry.editor.secure === data.edit.secure
-        : (entry.data.role === 'button') === (data.role === 'button');
+        : buttons.has(entry.data.role) === buttons.has(data.role);
 }
 
 function place(parent, element, before) {
@@ -137,7 +138,7 @@ function update(h, entry, data) {
     } else {
         entry.after?.remove(); entry.after = null;
     }
-    if (data.focusable || data.press || editor || data.role === 'button') {
+    if (data.focusable || data.press || editor || buttons.has(data.role)) {
         attribute(element, 'tabindex', data.tab);
     } else attribute(element, 'tabindex', null);
     attribute(element, 'aria-expanded', data.expanded);
@@ -146,7 +147,7 @@ function update(h, entry, data) {
     attribute(element, 'aria-level', data.role === 'heading' ? data.level ?? 2 : data.level);
     attribute(element, 'aria-modal', data.modal ? true : null);
     attribute(element, 'aria-disabled', data.disabled ? true : null);
-    if (editor || data.role === 'button') element.disabled = data.disabled;
+    if (editor || buttons.has(data.role)) element.disabled = data.disabled;
     if (data.help) {
         if (!entry.help) {
             entry.help = document.createElement('span');

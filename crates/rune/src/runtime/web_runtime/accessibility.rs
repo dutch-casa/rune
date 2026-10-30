@@ -1,5 +1,6 @@
 //! Browser semantics project retained nodes and the runtime's existing link observations.
 use super::super::*;
+use crate::el_a11y::LabelSource;
 use serde::{Serialize, Serializer};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -128,13 +129,17 @@ impl<S: 'static> Runtime<S> {
         for i in (0..self.nodes.len()).rev() {
             if keep[i] && let Some(parent) = self.nodes[i].parent { keep[parent] = true; }
         }
-        let mut labels: Vec<_> = self.nodes.iter().map(|n| n.label.as_deref().filter(|label| !label.is_empty())).collect();
+        let mut labels: Vec<_> = self.nodes.iter().map(|n| {
+            n.label.as_deref().filter(|label| !label.is_empty()).map(|label| (label, n.a11y.label_source))
+        }).collect();
         let owners = self.input_owners(|j| !hidden[j] && self.in_scope(j));
-        for (i, n) in self.nodes.iter().enumerate() {
-            if n.input.is_none() && n.role == "textbox" && let Some(label) = labels[i]
-                && let Some(editor) = owners[i]
+        // A deeper name wins ties, but a stronger source can replace it.
+        for (i, n) in self.nodes.iter().enumerate().rev() {
+            if n.input.is_none() && (n.role == "textbox" || n.a11y.label_source == LabelSource::Composed)
+                && let Some(label) = labels[i] && let Some(editor) = owners[i]
+                && labels[editor].is_none_or(|(_, source)| source < label.1)
             {
-                labels[editor] = labels[editor].or(Some(label));
+                labels[editor] = Some(label);
             }
         }
         let tab: HashSet<_> = self.tab_order().into_iter().collect();
@@ -158,11 +163,10 @@ impl<S: 'static> Runtime<S> {
                 self.visit_link_elements(i, visible, |link| {
                     if link.text.is_some() { inline.push(link); }
                 });
-                inline.sort_by_key(|link| n.text.as_ref().unwrap().links[link.index].start);
             }
             nodes.push(Semantic {
                 id: Id(n.id.0, None), parent: n.parent.map(|p| Id(self.nodes[p].id.0, None)),
-                key: n.input.as_ref().map(|_| n.path.as_str()), role: if shell { "group" } else { n.role }, label: labels[i],
+                key: n.input.as_ref().map(|_| n.path.as_str()), role: if shell { "group" } else { n.role }, label: labels[i].map(|(label, _)| label),
                 text: (!secure && n.input.is_none() && self.in_scope(i)).then(|| n.text.as_ref().and_then(|t| {
                     inline.first().map_or(Some(t.source_text()), |link| t.source_slice(0, t.links[link.index].start))
                 })).flatten(),
