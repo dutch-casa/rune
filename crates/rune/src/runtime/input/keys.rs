@@ -49,6 +49,7 @@ impl<S: 'static> Runtime<S> {
             }
         }
         if self.focus_key(ev, shown, one) { return true; }
+        if self.readonly_input_key(ev, one) { return true; }
         let input_handles = match &ev.key {
             crate::edit::Key::Function(_) | crate::edit::Key::ContextMenu | crate::edit::Key::Tab | crate::edit::Key::PageUp | crate::edit::Key::PageDown => false,
             crate::edit::Key::Command(c) => {
@@ -86,6 +87,29 @@ impl<S: 'static> Runtime<S> {
         if !repeat && self.selection_key(ev, one) { return true; }
         if !repeat && self.context_menu_key(ev, one) { return true; }
         self.page_scroll(ev) || self.playground_key(ev, one)
+    }
+
+    /// A read-only field owns its selection in the retained text-selection state, never in app state.
+    fn readonly_input_key(&mut self, ev: &KeyEvent, tx: &mut Tx) -> bool {
+        let crate::Key::Command(command @ ('a' | 'c')) = ev.key else { return false };
+        let Some(i) = self.focused_index().filter(|&i| self.is_selectable(i) && self.nodes[i].input.is_some() && self.can_focus(i)) else { return false };
+        if command == 'a' {
+            self.select_span(i, i);
+            return true;
+        }
+        let range = self.text_selection().filter(|(path, _)| *path == self.nodes[i].path).map(|(_, range)| range);
+        let edit = &mut self.nodes[i].input.as_mut().unwrap().edit;
+        if let Some(range) = range { edit.set_selection(range.start, range.end); }
+        let text = edit.selected().to_owned();
+        if edit.is_rich() {
+            let html = edit.selected_html();
+            if !html.is_empty() {
+                tx.copy_rich(crate::ClipboardContent::new(text).with_html(html));
+                return true;
+            }
+        }
+        tx.copy(text);
+        true
     }
 
     /// `AppSpec::on_key`, given the stage's state while the playground shows one of the app's.

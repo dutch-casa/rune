@@ -93,7 +93,7 @@ $marker
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Rune</title>
-<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none;touch-action:none}#status{font:16px system-ui;padding:24px}</style>
+<style>html,body{margin:0;width:100%;height:100%;overflow:hidden;overscroll-behavior:none}#status{font:16px system-ui;padding:24px}</style>
 <div id="status">Loading…</div>
 $reload
 <script type="module">

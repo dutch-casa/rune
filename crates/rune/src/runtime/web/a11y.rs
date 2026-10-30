@@ -64,6 +64,7 @@ pub(crate) struct A11yItem {
     pub text: String,
     pub runs: Vec<A11yRun>,
     pub name: Option<String>,
+    pub labelled_by: Option<String>,
     pub parent: Option<String>,
     pub tab: Option<i32>,
     pub disabled: bool,
@@ -134,6 +135,7 @@ impl A11yItem {
             obj.insert("u".into(), Value::Array(runs));
         }
         if let Some(name) = &self.name { obj.insert("name".into(), json!(name)); }
+        if let Some(path) = &self.labelled_by { obj.insert("labelled_by".into(), json!(path)); }
         if let Some(parent) = &self.parent { obj.insert("parent".into(), json!(parent)); }
         if let Some(tab) = self.tab { obj.insert("tab".into(), json!(tab)); }
         if self.disabled { obj.insert("disabled".into(), json!(true)); }
@@ -246,7 +248,7 @@ impl<S: 'static> Runtime<S> {
         A11yItem {
             kind, path: n.path.clone(), rect: rect4(self.drawn_box(i)), font_size: 0.0,
             level: None, expanded: n.a11y.expanded, text: String::new(), runs: Vec::new(),
-            name, parent, tab,
+            name, labelled_by: None, parent, tab,
             disabled: n.a11y.disabled,
             checked: n.a11y.checked.map(|s| if s.indeterminate { "mixed" } else if s.checked { "true" } else { "false" }),
             selected: n.focus.selected, help: n.help.clone().filter(|_| !n.help_cut || n.elided.is_some()),
@@ -270,7 +272,29 @@ impl<S: 'static> Runtime<S> {
         let mut last_flow_parent: Option<usize> = None;
         let visible = |i: usize| self.in_scope(i) && !self.subtree_exiting(i) && !self.subtree_unmounted(i)
             && std::iter::successors(Some(i), |&j| self.nodes[j].parent).all(|j| self.nodes[j].vis.opacity > 0.01);
-        let owners = self.input_owners(visible);
+        let owners = self.subtree_owners(|i| self.nodes[i].input.is_some() && visible(i));
+        let captions = self.subtree_owners(|i| {
+            let n = &self.nodes[i];
+            n.role == "label" && visible(i) && {
+                let rect = rect4(self.drawn_box(i));
+                rect[2] > 0.0 && rect[3] > 0.0
+            } && n.text.as_deref().is_some_and(|t| {
+                !t.redacted && if t.uncopied.is_empty() { !t.content.trim().is_empty() }
+                    else { !clean_slice(t, 0, t.content.len()).trim().is_empty() }
+            })
+        });
+        let mut nearby_caption = vec![None; self.nodes.len()];
+        for (i, node) in self.nodes.iter().enumerate() {
+            nearby_caption[i] = captions[i].or_else(|| node.parent.and_then(|p| nearby_caption[p]));
+        }
+        let caption_for = |i: usize, name: Option<&str>| {
+            let caption = nearby_caption[i]?;
+            let spec = self.nodes[caption].text.as_deref()?;
+            let name = name?.trim();
+            let matches = if spec.uncopied.is_empty() { name == spec.content.trim() }
+                else { name == clean_slice(spec, 0, spec.content.len()).trim() };
+            matches.then(|| self.nodes[caption].path.clone())
+        };
         let mut tabbable = vec![false; self.nodes.len()];
         for i in self.tab_order() { tabbable[i] = true; }
         let mut labels: Vec<_> = self.nodes.iter().map(|n| n.label.as_deref()
@@ -304,6 +328,7 @@ impl<S: 'static> Runtime<S> {
                     else if readonly { (0, input.edit.text.as_str(), 0, 0) }
                     else { context_window(&input.edit) };
                 let mut item = self.a11y_item(i, "textbox", parent, labels[i].map(|(s, _)| s.to_owned()), tab);
+                item.labelled_by = caption_for(i, item.name.as_deref());
                 item.edit = Some(A11yEdit { text: (!focused).then(|| text.to_owned()), base, anchor, focus,
                     secure, readonly, single: input.single_line, placeholder: input.placeholder.clone() });
                 A11yItem::record_source(&mut sources, track, &item, n.id);
@@ -319,7 +344,7 @@ impl<S: 'static> Runtime<S> {
             } else { match n.role {
                 "group" if labels[i].is_some() || tab.is_some() || n.focus.group => Some("group"),
                 "textbox" => Some("group"),
-                "text" | "heading" | "button" | "group" => None,
+                "text" | "heading" | "button" | "group" | "label" => None,
                 role => Some(role),
             }};
             let editor_owns_name = owners[i].is_some_and(|editor| labels[i].is_some()
@@ -334,6 +359,9 @@ impl<S: 'static> Runtime<S> {
                 || self.nodes[j].role == "button" || self.nodes[j].input.is_some());
             if let Some(kind) = semantic_kind {
                 let mut item = self.a11y_item(i, kind, parent.clone(), labels[i].map(|(s, _)| s.to_owned()), tab);
+                if matches!(kind, "group" | "combobox") {
+                    item.labelled_by = caption_for(i, item.name.as_deref());
+                }
                 if !matches!(kind, "checkbox" | "radio" | "switch")
                     && let Some(spec) = n.text.as_deref().filter(|t| !t.redacted)
                 {
@@ -355,9 +383,21 @@ impl<S: 'static> Runtime<S> {
                         item.text.push_str(text);
                     }
                     if name_in_content { item.name = None; }
-                } else if matches!(kind, "tab" | "option" | "menuitem" | "menuitemcheckbox" | "menuitemradio")
-                    && item.name.is_none()
-                {
+                } else if matches!(kind, "tab" | "option") {
+                    let name_in_content = item.name.as_deref().is_some_and(|name| {
+                        (i..end).any(|j| {
+                            let node = &self.nodes[j];
+                            visible(j) && node.input.is_none() && node.text.as_deref()
+                                .filter(|t| !t.redacted)
+                                .is_some_and(|t| clean_slice(t, 0, t.content.len()).trim() == name.trim())
+                        })
+                    });
+                    if name_in_content { item.name = None; }
+                    else if item.name.is_none() {
+                        let label = self.descendant_label(i + 1, end);
+                        if !label.is_empty() { item.name = Some(label); }
+                    }
+                } else if matches!(kind, "menuitem" | "menuitemcheckbox" | "menuitemradio") && item.name.is_none() {
                     let label = self.descendant_label(i + 1, end);
                     if !label.is_empty() { item.name = Some(label); }
                 }
@@ -387,6 +427,7 @@ impl<S: 'static> Runtime<S> {
                 let runs = text_runs(&n.path, spec, tab, |k| self.allowed(i) && self.link_eligible(i, k));
                 if !runs.is_empty() {
                     let is_heading = n.role == "heading";
+                    let is_label = n.role == "label";
                     // Flowed word-by-word paragraphs (`pr_chips::flow`) put sibling words (or 1-word
                     // wrapper rows) inside one flex-wrap line row: merge consecutive inline text runs
                     // sharing that flow container so screen readers and Find-in-page see whole sentences.
@@ -401,9 +442,10 @@ impl<S: 'static> Runtime<S> {
                             None
                         }
                     });
-                    if !is_heading && flow_group.is_some() && flow_group == last_flow_parent
+                    if !is_heading && !is_label && flow_group.is_some() && flow_group == last_flow_parent
                         && let Some(prev) = out.last_mut().filter(|it| it.kind == "text")
                     {
+                        if runs.iter().any(|run| run.href.is_some()) { prev.tab = prev.tab.map(|_| -1); }
                         let px1 = prev.rect[0] + prev.rect[2];
                         let py1 = prev.rect[1] + prev.rect[3];
                         let nx0 = prev.rect[0].min(rect[0]);
@@ -439,8 +481,9 @@ impl<S: 'static> Runtime<S> {
                     } else {
                         (String::new(), runs)
                     };
-                    let mut item = self.a11y_item(i, if is_heading { "heading" } else { "text" }, parent.clone(),
-                        labels[i].map(|(s, _)| s.to_owned()), tab);
+                    let has_links = rich_runs.iter().any(|run| run.href.is_some());
+                    let mut item = self.a11y_item(i, if is_heading { "heading" } else if is_label { "label" } else { "text" }, parent.clone(),
+                        labels[i].map(|(s, _)| s.to_owned()), if has_links { tab.map(|_| -1) } else { tab });
                     item.font_size = round1(spec.style.size);
                     item.level = is_heading.then(|| n.a11y.level.unwrap_or(2).clamp(1, 6));
                     item.expanded = None;
@@ -448,7 +491,7 @@ impl<S: 'static> Runtime<S> {
                     item.runs = rich_runs;
                     A11yItem::record_source(&mut sources, track, &item, n.id);
                     out.push(item);
-                    last_flow_parent = if is_heading { None } else { flow_group };
+                    last_flow_parent = if is_heading || is_label { None } else { flow_group };
                 }
             } else if n.role == "heading" && let Some(lbl) = n.label.clone().filter(|s| !s.trim().is_empty()) {
                 let mut item = self.a11y_item(i, "heading", parent, None, tab);
@@ -557,7 +600,7 @@ impl<S: 'static> Runtime<S> {
                 }
                 if !self.can_focus(i) { return false; }
                 if self.set_focus(Some(path.to_owned()), true) { self.dirty = true; }
-                self.pending.scroll_to.push((None, path.to_owned()));
+                self.pending.scroll_to.push(super::ScrollReveal::into_view(None, path.to_owned()));
                 true
             }
             Some("a11y_press") if self.nodes[i].handlers.on_press.is_some() => {
