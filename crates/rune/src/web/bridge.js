@@ -1,5 +1,6 @@
-// Browser text services and semantic DOM accessibility mirror.
+// Browser text services, semantic DOM mirror, and an optional text view of that mirror.
 import { createEditor } from './text_input.js';
+import * as textView from './text_view.js';
 
 const roles = new Set(('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem').split(' '));
 const unnamed = new Set(['none', 'presentation', 'paragraph', 'code', 'emphasis', 'strong', 'subscript', 'superscript', 'term', 'caption', 'deletion', 'insertion']);
@@ -78,7 +79,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
     }
     const h = { canvas, a11y, a11yNodes: new Map(), editors: new Map(), parked: null, context: null,
         bounds: new Map(), focused: null, modal: false, keys: new Map(), prefix: `rune-a11y-${++nextRoot}`, nextId: 0,
-        copyText: '', listeners: [], syncing: false, disposed: false, positionedParent,
+        copyText: '', listeners: [], syncing: false, disposed: false, embedded, positionedParent,
         canvasAriaHidden: canvas.getAttribute('aria-hidden'), canvasTabIndex: canvas.getAttribute('tabindex'), mirrorActive: false };
     h.send = event => {
         const message = JSON.stringify(event);
@@ -130,9 +131,12 @@ export function mount(canvas, callback, embedded, fitHeight) {
         const node = target(h, event.target);
         if (event.key === 'Tab') {
             if (!h.modal) return;
+        } else if (textView.showing(h) && !node) {
+            return;
         } else {
             if (node?.element.dataset.runeUrl === 'true' && (event.key === 'Enter' || event.key === ' ')) return;
             if (node?.link === null && h.a11yNodes.get(node?.path)?.data.k === 'button' && event.key === 'Enter') return;
+            if (textView.showing(h) && node?.link === null && buttonRoles.has(h.a11yNodes.get(node?.path)?.data.k) && event.key === ' ') return;
             if (h.editors.has(node?.path)) return;
         }
         event.preventDefault();
@@ -157,6 +161,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
         // An actual DOM selection belongs to the browser, not Rune's cached canvas selection.
         const selection = document.getSelection();
         if (selection && !selection.isCollapsed) return;
+        if (textView.skipCopy(h, active)) return;
         if (!h.editors.has(target(h, active)?.path) && h.copyText && event.clipboardData
             && (active === canvas || (!embedded && active === document.body) || a11y.contains(active))) {
             event.preventDefault();
@@ -178,6 +183,15 @@ export function mount(canvas, callback, embedded, fitHeight) {
     queueMicrotask(() => {
         if (!h.disposed && !embedded && document.activeElement === document.body) focusElement(h).focus({ preventScroll: true });
     });
+    h.restoreOverlay = entry => {
+        entry.element.style.cssText = nodeChrome;
+        entry.element.style.font = `${entry.editor ? 16 : entry.data.s || 14}px/1.25 sans-serif`;
+        entry.element.style.whiteSpace = 'pre-wrap';
+        for (const link of entry.content?.querySelectorAll('[data-rune-link]') ?? []) link.style.cssText = linkChrome;
+    };
+    h.placeBounds = () => applyBounds(h);
+    h.refreshEntries = () => refreshEntries(h);
+    textView.attach(h);
     return h;
 }
 
@@ -209,7 +223,7 @@ function create(h, item) {
     if (tag === 'button') element.type = 'button';
     element.id = `${h.prefix}-${++h.nextId}`;
     element.dataset.runeNode = item.p;
-    element.style.cssText = nodeChrome;
+    element.style.cssText = textView.showing(h) ? '' : nodeChrome;
     const content = editor ? null : document.createElement('span');
     if (content) element.append(content);
     return { element, editor, content, data: item, tag, help: null, signature: null };
@@ -270,8 +284,10 @@ function update(h, entry, item) {
         entry.help?.remove(); entry.help = null;
         attribute(element, 'aria-describedby', null);
     }
-    element.style.font = `${editor ? 16 : item.s || 14}px/1.25 sans-serif`;
-    element.style.whiteSpace = 'pre-wrap';
+    if (!textView.showing(h)) {
+        element.style.font = `${editor ? 16 : item.s || 14}px/1.25 sans-serif`;
+        element.style.whiteSpace = 'pre-wrap';
+    }
     if (editor) {
         element.readOnly = !!item.edit.readonly;
         attribute(element, 'aria-multiline', !item.edit.single);
@@ -294,10 +310,12 @@ export function syncCopy(h, text) {
     h.copyText = text;
 }
 
-function writeContent(entry) {
+function writeContent(h, entry, parents) {
     const { content, data: item } = entry;
     if (!content) return;
-    const signature = JSON.stringify([item.t, item.u]);
+    const mode = textView.showing(h);
+    const fallback = parents && mode ? leafFallback(item, parents) : '';
+    const signature = JSON.stringify([mode, item.t, item.u, fallback]);
     if (entry.signature === signature) return;
     entry.signature = signature;
     if (item.u?.length) {
@@ -315,13 +333,13 @@ function writeContent(entry) {
                 attribute(a, 'role', run.role || null);
                 attribute(a, 'aria-label', run.label || null);
                 attribute(a, 'tabindex', run.tab ?? -1);
-                a.style.cssText = linkChrome;
+                a.style.cssText = mode ? '' : linkChrome;
                 content.append(a);
             } else content.append(document.createTextNode(run.t));
         }
     } else {
         // Safari can cache a clipped control's name after replacing its text node.
-        const text = item.t || '';
+        const text = item.t || fallback;
         const child = content.firstChild;
         if (child?.nodeType === 3 && content.childNodes.length === 1) {
             if (child.data !== text) child.data = text;
@@ -329,8 +347,58 @@ function writeContent(entry) {
     }
 }
 
-function applyBounds(h) {
+function leafFallback(item, parents) {
+    if (item.t || item.u?.length || parents.has(item.p)) return '';
+    const parts = [];
+    if (item.name) parts.push(item.name);
+    const range = item.range;
+    if (range && Number.isFinite(range.value) && Number.isFinite(range.min) && Number.isFinite(range.max)) {
+        parts.push(`${range.value} (${range.min}–${range.max})`);
+    }
+    return parts.join(' ');
+}
+
+function presentEntries(h) {
+    let parents = null;
+    if (textView.showing(h)) {
+        parents = new Set();
+        for (const { data: item } of h.a11yNodes.values()) {
+            if (!item.t && !item.u?.length && !item.name && !item.edit) continue;
+            let parent = item.parent;
+            while (parent && !parents.has(parent)) {
+                parents.add(parent);
+                parent = h.a11yNodes.get(parent)?.data.parent;
+            }
+        }
+        if (h.parked?.data.parent) parents.add(h.parked.data.parent);
+    }
+    for (const entry of h.a11yNodes.values()) writeContent(h, entry, parents);
+    if (h.parked) writeContent(h, h.parked, parents);
+}
+
+function refreshEntries(h) {
     if (h.disposed) return;
+    for (const entry of h.a11yNodes.values()) {
+        entry.signature = null;
+        update(h, entry, entry.data);
+    }
+    if (h.parked) {
+        h.parked.signature = null;
+        update(h, h.parked, h.parked.data);
+    }
+    presentEntries(h);
+    applyBounds(h);
+}
+
+function revealActive(h, entry, activeDesc, activeId, focusPath) {
+    if (!textView.showing(h) || textView.blockActivate(h) || entry.data.p !== focusPath) return;
+    if (entry.data.k !== 'grid' && entry.data.k !== 'treegrid' && entry.data.k !== 'tree' && entry.data.k !== 'combobox') return;
+    if (!activeId || !activeDesc || entry.element.getAttribute('aria-activedescendant') === activeId) return;
+    activeDesc.element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function applyBounds(h) {
+    if (h.disposed || textView.showing(h)) return;
     const canvasRect = h.canvas.getBoundingClientRect();
     const rootRect = h.a11y.getBoundingClientRect();
     for (const [path, entry] of h.a11yNodes) {
@@ -349,6 +417,7 @@ export function syncA11y(h, json) {
     const packet = JSON.parse(json);
     const active = document.activeElement;
     const owned = active === h.canvas || h.a11y.contains(active);
+    const selection = textView.selection(h);
     h.syncing = true;
     try {
         h.modal = !!packet.modal;
@@ -409,9 +478,10 @@ export function syncA11y(h, json) {
                 h.a11yNodes.delete(path);
                 h.bounds.delete(path);
             }
-            for (const entry of h.a11yNodes.values()) writeContent(entry);
+            presentEntries(h);
             // Paths may refer to later siblings. Resolve them only after retained entries exist,
             // and clear a relation whose target was removed.
+            const focusPath = packet.focus?.path ?? null;
             for (const entry of h.a11yNodes.values()) {
                 const label = h.a11yNodes.get(entry.data.labelled_by);
                 const id = label?.data.k === 'label' ? label.element.id : null;
@@ -419,6 +489,7 @@ export function syncA11y(h, json) {
                 if (id) attribute(entry.element, 'aria-label', null);
                 const activeDesc = h.a11yNodes.get(entry.data.activedescendant);
                 const activeId = activeDesc && activeDesc.element !== entry.element && activeDesc.element.isConnected ? activeDesc.element.id : null;
+                revealActive(h, entry, activeDesc, activeId, focusPath);
                 attribute(entry.element, 'aria-activedescendant', activeId);
                 const controlled = h.a11yNodes.get(entry.data.controls);
                 const controlsId = controlled && controlled.element !== entry.element && controlled.element.isConnected ? controlled.element.id : null;
@@ -436,18 +507,23 @@ export function syncA11y(h, json) {
         }
         for (const [path, rect] of packet.bounds ?? []) h.bounds.set(path, rect);
         applyBounds(h);
+        const modelChanged = !sameFocus(h.focused, packet.focus ?? null);
         h.focused = packet.focus ?? null;
-        if (owned) {
+        if (!textView.keepFocus(h, active, modelChanged) && owned) {
             const element = focusElement(h);
-            if (document.activeElement !== element) element.focus({ preventScroll: true });
+            if (document.activeElement !== element) {
+                element.focus({ preventScroll: true });
+                if (textView.showing(h) && modelChanged) element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+            }
         }
     } finally {
+        textView.restoreSelection(h, selection);
         h.syncing = false;
     }
 }
 
 export function activate(h) {
-    if (h.disposed) return;
+    if (h.disposed || textView.blockActivate(h)) return;
     const entry = h.editors.get(h.context?.key);
     const field = entry?.element ?? focusElement(h);
     if (entry) field.inputMode = 'text';
@@ -462,6 +538,7 @@ export async function pastedImage(h, max) {
 
 export function destroy(h) {
     h.disposed = true;
+    textView.detach(h);
     h.image = undefined;
     for (const remove of h.listeners) remove();
     for (const entry of h.a11yNodes.values()) disposeEntry(entry);

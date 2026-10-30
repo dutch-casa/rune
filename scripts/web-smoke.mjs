@@ -6,6 +6,7 @@ import { resolve, extname, sep } from 'node:path';
 import { inputSmoke } from './web-input-smoke.mjs';
 import { accessibilityProof } from './web-accessibility.mjs';
 import { lifecycleProof } from './web-lifecycle.mjs';
+import { textPresentationProof } from './web-text-view.mjs';
 const { chromium, webkit } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const engine = process.env.WEB_ENGINE || 'chromium';
 const root = resolve(process.argv[2] || 'target/web');
@@ -353,6 +354,26 @@ try {
     });
     await accessibilityProof(page, url, ax ? axNode : null);
     if (engine === 'chromium') await lifecycleProof(page);
+    await textPresentationProof(page, url, ax ? axNode : null);
+    await page.waitForFunction(() => {
+        const canvas = document.querySelector('canvas');
+        const control = document.querySelector('[data-rune-text-toggle]');
+        if (!canvas || !control) return false;
+        const rect = canvas.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        return Math.abs(rect.top - ((viewport?.offsetTop ?? 0) + control.offsetHeight)) <= 1
+            && Math.abs(rect.height - Math.max(0, (viewport?.height ?? innerHeight) - control.offsetHeight)) <= 1;
+    });
+    const textToggle = page.getByRole('button', { name: 'Text view', exact: true });
+    const textEditor = page.getByRole('textbox', { name: 'Account name', exact: true });
+    assert.equal(await textToggle.getAttribute('aria-pressed'), 'false');
+    await textToggle.click();
+    await page.locator('[data-rune-text-view="on"]').waitFor();
+    assert.equal(await textEditor.getAttribute('inputmode'), 'text');
+    await textToggle.click();
+    await page.locator('[data-rune-text-view="off"]').waitFor();
+    const canvasInputMode = await page.evaluate(() => matchMedia('(pointer: coarse)').matches ? 'none' : 'text');
+    assert.equal(await textEditor.getAttribute('inputmode'), canvasInputMode);
     console.log(JSON.stringify({ accessibility: 'passed', checks: ['caption references and lifecycle', 'explicit names',
         'multi-editor groups', 'native link Tab order', 'option and tab content names', 'named pressable', 'native pinch zoom'] }));
     assert.deepEqual(await page.evaluate(() => window.__proof.gpuErrors), []);

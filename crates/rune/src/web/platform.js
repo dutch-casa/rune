@@ -79,6 +79,13 @@ export async function fetchImage(url, maxSide) {
     }
 }
 
+const viewports = new WeakMap();
+
+export function setViewportInset(canvas, inset) {
+    const resize = viewports.get(canvas);
+    if (resize) resize(inset);
+}
+
 export function viewport(canvas, callback, embedded) {
     const probe = document.createElement('div');
     probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
@@ -88,18 +95,25 @@ export function viewport(canvas, callback, embedded) {
         canvas.style.direction = 'ltr';
         canvas.style.writingMode = 'horizontal-tb';
     }
-    let disposed = false;
+    let inset = 0, disposed = false, installed = false;
     const update = () => {
         if (!embedded) {
             const v = window.visualViewport;
             canvas.style.width = `${v?.width ?? innerWidth}px`;
-            canvas.style.height = `${v?.height ?? innerHeight}px`;
+            canvas.style.height = `${Math.max(0, (v?.height ?? innerHeight) - inset)}px`;
             canvas.style.left = `${v?.offsetLeft ?? 0}px`;
-            canvas.style.top = `${v?.offsetTop ?? 0}px`;
+            canvas.style.top = `${(v?.offsetTop ?? 0) + inset}px`;
         }
         const s = getComputedStyle(probe);
-        callback(JSON.stringify({ kind: 'viewport', insets: embedded ? [0, 0, 0, 0] : [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map(parseFloat) }));
+        const insets = embedded ? [0, 0, 0, 0] : [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map(parseFloat);
+        insets[0] = Math.max(0, insets[0] - inset);
+        callback(JSON.stringify({ kind: 'viewport', insets }));
     };
+    viewports.set(canvas, value => {
+        if (value === inset) return;
+        inset = value;
+        if (installed) update();
+    });
     const motion = matchMedia('(prefers-reduced-motion: reduce)');
     const reduced = () => callback(JSON.stringify({ kind: 'motion', reduced: motion.matches }));
     const focus = () => callback(JSON.stringify({ kind: 'focus', focused: document.hasFocus() }));
@@ -123,9 +137,10 @@ export function viewport(canvas, callback, embedded) {
     window.addEventListener('blur', focus);
     document.addEventListener('visibilitychange', visibility);
     // Mount is called while Rust is installing the shell; enter it only after installation.
-    queueMicrotask(() => { if (!disposed) { update(); reduced(); focus(); visibility(); } });
+    queueMicrotask(() => { if (!disposed) { installed = true; update(); reduced(); focus(); visibility(); } });
     return () => {
         disposed = true;
+        viewports.delete(canvas);
         dprMedia?.removeEventListener('change', onDpr);
         window.visualViewport?.removeEventListener('resize', update);
         window.visualViewport?.removeEventListener('scroll', update);

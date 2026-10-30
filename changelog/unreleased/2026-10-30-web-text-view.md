@@ -1,0 +1,1 @@
+- Web mounts now include a Text view button that presents the existing semantic DOM in selectable, reflowing text with native editors and application actions. Full-viewport mounts reserve the button's height above the canvas even when Text view is off; embedded mounts place it before the canvas.

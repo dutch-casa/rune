@@ -36,7 +36,7 @@ export function createEditor(h, key, secure, combobox = false) {
         field.autocomplete = 'off';
         field.setAttribute('autocapitalize', 'off');
     } else field.setAttribute('autocapitalize', 'sentences');
-    field.inputMode = matchMedia('(pointer: coarse)').matches ? 'none' : 'text';
+    field.inputMode = h.textView?.on || !matchMedia('(pointer: coarse)').matches ? 'text' : 'none';
     const e = { field, key, secure, combobox: !!combobox, value: '', base: 0, composing: false, composition: '', shift: false,
         handledInput: null, syncing: false, disposed: false, listeners: [] };
     const listen = (name, handler) => {

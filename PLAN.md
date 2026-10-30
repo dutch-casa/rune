@@ -613,7 +613,9 @@ verification harness already in place.
 The experimental M5 target uses winit 0.30 for its canvas, rAF and ResizeObserver.
 GPU initialization is asynchronous. Retained native editors supply browser text services,
 and a semantic DOM mirror exposes text, controls, names, state, numeric values, help and keyboard
-cursors from the retained scene. It runs on the main thread without SharedArrayBuffer. See [WEB.md](WEB.md)
+cursors from the retained scene. An always-present Text view button switches that same DOM
+into optional text flow; full-viewport mounts reserve its header in either mode. It runs on the
+main thread without SharedArrayBuffer. See [WEB.md](WEB.md)
 and `examples/web-hello` for behavior and verification. Real-device Safari keyboard verification,
 native accessibility adapters, WebGL fallback and EditContext remain follow-up work. Complete
 applications still need browser, screen-reader and WCAG verification.

@@ -53,7 +53,7 @@ Use `rune::time::Instant` for deadlines passed to Rune; it is `std::time::Instan
 
 ## Mount in a page
 
-By default Rune appends its own canvas, covers the viewport and stops the body scrolling.
+By default Rune appends its own canvas, covers the viewport below the Text view control and stops the body scrolling.
 `App::canvas_id("id")` mounts onto a `<canvas id="id">` the page already has instead:
 
 ```rust,ignore
@@ -66,8 +66,8 @@ App::new(spec).canvas_id("route-canvas").full_viewport().try_run()?;
 Inline, the canvas is as wide as its parent and as tall as `AppSpec::size` (or its content with
 `fit_content_height`, when vertical wheel and touch pans scroll the page); safe-area insets
 are zero and the title doesn't touch `document.title`. With `full_viewport` the canvas is fixed to
-the visual viewport like Rune's own, so an ancestor with a `transform` or `filter` would
-become its containing block; mount it outside one.
+the visual viewport below the Text view control, so an ancestor with a `transform` or `filter`
+would become its containing block; mount it outside one.
 
 `AppHandle::quit` unmounts the app when its route goes away: the loop stops, the GPU device is
 destroyed, Rune's listeners come off the page, and the body style and title it changed go back.
@@ -183,6 +183,16 @@ Focused virtual editors retain their native element across unmounts. Browsers wi
 `Element.moveBefore` use focus and selection restoration; reparenting can still end native
 composition in those browsers.
 
+Every browser mount has a **Text view** button, initially off, outside the reconciled scene.
+A full-viewport mount reserves the button's measured height above the canvas in both modes.
+An embedded mount inserts the button immediately before its canvas in the host's normal flow.
+
+Selecting Text view hides the canvas and displays the same semantic DOM in a scrollable text
+flow. The native editors, drafts, selection and application handlers remain the same. Browser
+zoom, user fonts, text spacing and foreground/background overrides can apply to the DOM.
+Select the button again to return to canvas rendering. This is an alternate presentation,
+not another UI tree or application state model.
+
 `Runtime::a11y_json()` retains its JSON array contract with optional control and editor fields.
 Virtual lists expose mounted rows only. Custom drawings need meaningful text alternatives.
 Authors still own content, theme contrast, custom keyboard interactions and the `open` state
@@ -218,6 +228,10 @@ descriptions through Chromium's accessibility tree. `?accessibility-proof` exerc
 invalid input recovery, progress and notification dismissal. Its `widget=combobox`, `table`
 and `tree` variants exercise keyboard cursors and native relationships. `widget=sidebar`
 checks independent header focus.
+
+The Text view checks cover retained editor identity and draft, text customization and 320px
+reflow, sending, native selection and copy, and return to canvas. They also cover selection
+across updates, the reserved full-viewport header and coarse-pointer editor input modes.
 
 Its mobile DPR check exercises the Safari-style CSS-size fallback because Chromium device
 emulation does not scale `devicePixelContentBoxSize`. This is not a real iPhone keyboard,
