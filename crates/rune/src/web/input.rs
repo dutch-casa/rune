@@ -2,11 +2,15 @@ use super::*;
 use wasm_bindgen::{JsCast, JsValue, prelude::*};
 use winit::event::{ElementState, MouseButton, TouchPhase};
 use winit::keyboard::ModifiersState;
+#[wasm_bindgen(module = "/src/web/text_input.js")]
+extern "C" {
+    fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32, secure: bool);
+}
+
 
 #[wasm_bindgen(module = "/src/web/bridge.js")]
 extern "C" {
     fn mount(canvas: &web_sys::HtmlCanvasElement, callback: &js_sys::Function, embedded: bool, fit_height: bool) -> JsValue;
-    fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32, secure: bool);
     #[wasm_bindgen(js_name = syncCopy)]
     fn sync_copy(handle: &JsValue, text: &str);
     #[wasm_bindgen(js_name = syncA11y)]
@@ -82,6 +86,7 @@ impl<S: 'static> Running<S> {
         }
         if let Some(json) = self.rt.web_a11y(&mut self.input.a11y) {
             sync_a11y(&self.input.handle, json);
+            self.input.a11y.delivered();
         }
         if focus { activate(&self.input.handle); }
     }
@@ -106,7 +111,7 @@ impl<S: 'static> Running<S> {
             }
             Some("edit" | "selection" | "preedit") => self.rt.web_edit(event),
             Some("sync") => self.input.mirror.key.clear(), // Composition's final sync was deferred by the DOM.
-            Some("paste") => {
+            Some("paste") if self.rt.web_can_paste(event["key"].as_str().unwrap_or_default()) => {
                 let mut content = crate::ClipboardContent::new(event["text"].as_str().unwrap_or_default());
                 if let Some(html) = event["html"].as_str().filter(|html| !html.is_empty()) { content = content.with_html(html); }
                 let handle = &self.input.handle;
@@ -118,8 +123,9 @@ impl<S: 'static> Running<S> {
                     self.rt.web_secure(event["key"].as_str().unwrap_or_default(), text);
                 }
             }
-            Some("key") => activate = self.rt.web_key(event),
-            Some("a11y_press" | "a11y_link") => { let _ = self.rt.web_a11y_action(event); }
+            Some("key" | "key_up") => activate = self.rt.web_key(event),
+            Some("a11y_focus") => activate = self.rt.web_a11y_action(event),
+            Some("a11y_blur" | "a11y_press" | "a11y_link") => { let _ = self.rt.web_a11y_action(event); }
             _ => {}
         }
         // Commit within the DOM event: clipboard, link and soft-keyboard APIs need activation.

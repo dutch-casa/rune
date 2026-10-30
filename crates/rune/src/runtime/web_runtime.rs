@@ -14,33 +14,11 @@ pub(crate) struct Mirror {
     pub secure: bool,
 }
 
-/// Read at most 512 UTF-16 units on each side, without scanning the document prefix.
-fn context_window(edit: &crate::TextEdit) -> (usize, &str, u32, u32) {
-    let (a, b) = edit.range();
-    let (raw_anchor, raw_focus) = if edit.anchor <= edit.focus { (a, b) } else { (b, a) };
-    let mut start = a;
-    let mut units = 0;
-    for (i, ch) in edit.text[..a].char_indices().rev() {
-        if units + ch.len_utf16() > 512 { break; }
-        units += ch.len_utf16();
-        start = i;
-    }
-    let mut end = b;
-    let mut units = 0;
-    for ch in edit.text[b..].chars() {
-        if units + ch.len_utf16() > 512 { break; }
-        units += ch.len_utf16();
-        end += ch.len_utf8();
-    }
-    let anchor = edit.text[start..raw_anchor].encode_utf16().count() as u32;
-    let focus = edit.text[start..raw_focus].encode_utf16().count() as u32;
-    (start, &edit.text[start..end], anchor, focus)
-}
 
 impl Mirror {
     fn update(&mut self, key: &str, edit: Option<&crate::TextEdit>) -> bool {
         let secure = edit.is_some_and(|e| e.is_secure());
-        let (base, text, anchor, focus) = edit.filter(|_| !secure).map(context_window).unwrap_or((0, "", 0, 0));
+        let (base, text, anchor, focus) = edit.filter(|_| !secure).map(super::web_a11y::context_window).unwrap_or((0, "", 0, 0));
         if self.key == key && self.base == base && self.text == text && self.anchor == anchor
             && self.focus == focus && self.secure == secure { return false; }
         self.key.clear(); self.key.push_str(key);
@@ -151,7 +129,7 @@ mod tests {
         for &a in boundaries.iter().step_by(157) {
             for &f in boundaries.iter().step_by(271) {
                 edit.anchor = a; edit.focus = f;
-                let (base, text, anchor, focus) = context_window(&edit);
+                let (base, text, anchor, focus) = super::super::web_a11y::context_window(&edit);
                 assert_eq!(base + byte_at(text, anchor as usize).unwrap(), a);
                 assert_eq!(base + byte_at(text, focus as usize).unwrap(), f);
                 let before = edit.text[base..a.min(f)].encode_utf16().count();
@@ -263,6 +241,21 @@ mod tests {
             (crate::Key::Command(':'), Some(Period), false),
             (crate::Key::Command('k'), Some(KeyK), false),
         ]);
+    }
+    #[test]
+    fn browser_key_release_allows_a_fresh_activation() {
+        fn view(_: &usize, _: &mut Cx<usize>) -> El {
+            crate::el().size(100.0, 40.0).role("button").focusable(true).default_button()
+                .on_press(|count: &mut usize| *count += 1)
+        }
+        let mut rt = Runtime::new(0_usize, view, (100.0, 40.0), Env::default());
+        rt.frame(0.0);
+        let down = json!({"kind":"key", "key":"Enter", "code":"Enter"});
+        let up = json!({"kind":"key_up", "key":"Enter", "code":"Enter"});
+        rt.web_key(&down); rt.frame(0.0);
+        rt.web_key(&up); rt.frame(0.0);
+        rt.web_key(&down); rt.frame(0.0);
+        assert_eq!(rt.state, 2);
     }
 }
 
@@ -387,11 +380,15 @@ impl<S: 'static> Runtime<S> {
             None => mirror.update("", None),
         }
     }
+    pub(crate) fn web_can_paste(&self, key: &str) -> bool {
+        self.focused.as_deref() == Some(key) && self.focused_input().is_some_and(|input| input.access.is_some())
+    }
 
     pub(crate) fn web_key(&mut self, event: &serde_json::Value) -> bool {
         let flag = |key: &str| event[key].as_bool().unwrap_or(false);
         let (shift, ctrl, alt, logo) = (flag("shift"), flag("ctrl"), flag("alt"), flag("meta"));
         let mods = crate::Mods { shift, alt, ctrl, logo, cmd: logo || ctrl };
+        let up = event["kind"] == "key_up";
         let key = match event["key"].as_str().unwrap_or_default() {
             "Enter" => crate::Key::Enter, "Tab" => crate::Key::Tab, "Escape" => crate::Key::Escape,
             "ArrowLeft" => crate::Key::Left, "ArrowRight" => crate::Key::Right,
@@ -401,16 +398,19 @@ impl<S: 'static> Runtime<S> {
             "Backspace" => crate::Key::Backspace, "Delete" => crate::Key::Delete,
             "ContextMenu" => crate::Key::ContextMenu,
             name if name.chars().count() == 1 && mods.cmd => crate::Key::Command(name.chars().next().unwrap().to_ascii_lowercase()),
+            name if name.chars().count() == 1 => crate::Key::Text(name.to_owned()),
             _ => return false,
         };
         let event_key = crate::KeyEvent { key, mods };
-        let activate = event_key.key == crate::Key::Tab;
+        let activate = !up && event_key.key == crate::Key::Tab;
         let repeat = flag("repeat");
         let code = event["code"].as_str().filter(|c| !c.is_empty() && !c.contains('+'))
             .and_then(|c| c.parse::<crate::Shortcut>().ok())
             .map(|s| s.physical_key());
         if let Some(key) = code {
-            self.physical_with_fallback(crate::PhysicalInput::Key { key, mods, pressed: true, repeat }, Some(event_key));
+            self.physical_with_fallback(crate::PhysicalInput::Key { key, mods, pressed: !up, repeat }, Some(event_key));
+        } else if up {
+            self.key_up(event_key);
         } else if repeat {
             self.repeat_key(event_key);
         } else {

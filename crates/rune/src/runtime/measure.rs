@@ -5,7 +5,7 @@ pub(super) fn collect_virtual_inputs(el: &El, parent: &str, index: usize, inert:
     if !crate::memo::has_focused_input(el) {
         return;
     }
-    let inert = inert || el.inert;
+    let inert = inert || el.inert || el.a11y.disabled;
     let input = el.input.as_ref().filter(|i| i.edit.focused && i.access.is_some());
     // A memo's shared children are skipped whole when none is a focused field.
     let skip = el.memo_children.as_ref().filter(|m| !m.focused_input).map_or(0, |m| m.children.len());

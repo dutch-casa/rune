@@ -108,18 +108,20 @@ For example, extend a static slice of `rune_theme_opencode::FONTS` with
 the combined slice to `spec.fonts`. Keep the theme's sans/mono family names in `spec.families`.
 Missing emoji and CJK glyphs display fallback boxes; they do not trigger font downloads.
 
-Rust supplies the hidden textarea with up to 512 UTF-16 units on each side of the selection,
-expanding for the selected range, and skips unchanged mirrors. Browser input events supply replacements; Rune validates the mirrored
-context and converts window-relative UTF-16 positions to UTF-8 boundaries before editing.
+Rust supplies each retained native editor with up to 512 UTF-16 units on each side of the
+selection, expanding for the selected range. Browser input events supply replacements;
+Rune validates the context and converts window-relative UTF-16 positions to UTF-8 boundaries.
 Composition holds the mirror stable until commit and replaces the composing word's range.
+
 Mobile `beforeinput` line breaks use Rune's Enter rules: submit, or Shift/Alt+Enter newline
 in a multiline field. A completed touch tap focuses the editor synchronously;
 a pan scrolls instead, with momentum and a damped edge return.
 
 Secure fields use an `<input type="password">` with autocomplete, autocorrect and spellcheck
 disabled. It receives only new keystrokes and is emptied after every input; the model's
-secret is never mirrored into the DOM. Leaving a field returns focus to the canvas so
-shortcuts and Tab keep working. Continuous pointer movement and wheel events wait for rAF.
+secret is never mirrored into the DOM. Native focus follows Rune's controls. Tab can leave
+a non-modal app; modal traversal stays inside the active modal. Continuous pointer movement
+and wheel events wait for rAF.
 
 `Tx::copy` and `Tx::request_paste` use the browser clipboard. Call them from a user input
 handler: permission and transient-activation rules still apply. Native Paste events work
@@ -142,10 +144,41 @@ points (zero on native). Apply them inside a full-canvas background. The canvas 
 `visualViewport` when a software keyboard reduces the visible height. Keep the generated
 page's `viewport-fit=cover` meta tag and the textarea's 16 px font size.
 
+## Accessibility
+
+The browser shell extends the retained scene into a hidden semantic DOM mirror. It exposes
+headings, text, links, controls and native editors without replacing canvas rendering.
+Geometry follows presented layout. Unchanged frames emit no mirror update.
+
+Rune Kit supplies names and checked, expanded and disabled state from its existing component
+values. A `Field` caption names its sole editor; an explicit control label takes precedence.
+Groups with several editors need a name for each editor. Icon-only controls need a label
+or help text that names their action.
+
+`El::fallback_label` replaces an existing name; it does not mean “set only if missing.”
+Use `label_if_missing` to supply a composed caption without replacing an explicit control name.
+
+For custom controls, use `El::role`, `label`, `checked(bool)`, `indeterminate(bool)` and
+`disabled(bool)` as appropriate. Roles do not implement a custom control's keyboard behavior.
+Read-only editors support native selection and copying. Disabled controls remain readable
+but cannot receive input. Browser actions are checked against the current scene.
+
+Inline links follow source order while retaining their action identities. Ordinary web URLs
+remain native anchors. Modal focus returns to the previous control or link on dismissal.
+Focused virtual editors retain their native element across unmounts. Browsers without
+`Element.moveBefore` use focus and selection restoration; reparenting can still end native
+composition in those browsers.
+
+`Runtime::a11y_json()` returns the existing JSON array with optional control and editor fields.
+Role metadata alone does not implement range values or complete composite-widget patterns.
+This target remains experimental. These semantics do not certify VoiceOver compatibility or
+WCAG conformance. Check an application's custom interactions with its target screen readers
+and devices.
+
 ## Scope and verification
 
-This target needs WebGPU. It has no WebGL fallback, DOM accessibility mirror, overlays,
-extra windows, native menus, drag-out, native audio/video, networking layer or hot patching.
+This target needs WebGPU. It has no WebGL fallback, overlays, extra windows, native menus,
+drag-out, native audio/video, networking layer or hot patching.
 Native configuration types remain source-compatible, but their desktop host paths are not
 used on wasm. Unsupported window requests warn in the console; Show/Open are ignored.
 The document title follows `AppSpec::title`, and hidden tabs report `is_visible() == false`.
@@ -158,18 +191,18 @@ node scripts/web-smoke.mjs target/web target/web-proof
 
 Install Playwright with its Chromium browser first. `PLAYWRIGHT_MODULE` and `CHROMIUM_PATH`
 can select an existing installation. `WEB_ENGINE=webkit` tries an installed Playwright WebKit
-and reports whether it has a WebGPU adapter. The proof checks GPU errors, idle rAF requests
-and submissions, touch
-focus and momentum, Unicode edits, a long sliding context, predictive replacement,
-composition, selection, paste, copied model text, link isolation, theme and viewport resize.
-The `?input-proof` fixture adds password input, Tab/Escape focus, mobile Enter, recomposition,
-same-field focus stability, continuous-input coalescing and visibility regression checks.
+and reports whether it has a WebGPU adapter.
+
+The check covers GPU errors, idle rAF requests and submissions, touch focus and momentum,
+Unicode edits, sliding editor contexts, composition, paste, clipboard copy, theme and resize.
+The `?input-proof` fixture adds password input, Tab/Escape focus and mobile Enter behavior.
+Its Rune Kit controls also check native accessibility names and values, caption ownership,
+checkable labels and help descriptions through Chromium's accessibility tree.
+
 Its mobile DPR check exercises the Safari-style CSS-size fallback because Chromium device
 emulation does not scale `devicePixelContentBoxSize`. This is not a real iPhone keyboard,
 dictation, autocorrect or Safari WebGPU test; those still need device verification.
 
-The shell follows PLAN's winit-first approach, retaining winit 0.30's rAF and ResizeObserver
-implementation. Unlike research/11's proposed custom shell, it adds a document-aware
-textarea beside winit rather than replacing winit. This also defers PLAN's proposed switch
-to an owned shell when text input lands. WebGL fallback, EditContext and a DOM
-accessibility mirror from that research remain later work.
+The shell retains winit 0.30's rAF and ResizeObserver integration. Rune owns the browser text
+services and semantic DOM bridge beside the canvas. This does not replace the native shells.
+WebGL fallback and EditContext remain later work.

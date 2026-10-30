@@ -28,8 +28,22 @@ try {
         hasTouch: true, isMobile: true,
         permissions: engine === 'chromium' ? ['clipboard-read', 'clipboard-write'] : [], colorScheme: 'dark' });
     const page = await context.newPage();
+    const canvas = page.locator('canvas');
     page.on('pageerror', error => { errors.push(error.message); console.log(error.message); });
     page.on('console', message => { if (message.type() === 'error') { errors.push(message.text()); console.log(message.text()); } });
+    const ax = engine === 'chromium' ? await context.newCDPSession(page) : null;
+    const axNode = async locator => {
+        await locator.evaluate(element => element.setAttribute('data-proof-ax', ''));
+        try {
+            const { root } = await ax.send('DOM.getDocument');
+            const { nodeId } = await ax.send('DOM.querySelector', { nodeId: root.nodeId, selector: '[data-proof-ax]' });
+            const { node } = await ax.send('DOM.describeNode', { nodeId });
+            const { nodes } = await ax.send('Accessibility.getPartialAXTree', { nodeId, fetchRelatives: false });
+            return nodes.find(item => item.backendDOMNodeId === node.backendNodeId);
+        } finally {
+            await locator.evaluate(element => element.removeAttribute('data-proof-ax'));
+        }
+    };
     await page.addInitScript(() => {
         // Chromium's device emulation leaves devicePixelContentBoxSize at the host DPR.
         // Exercise winit's Safari fallback (CSS content box × emulated DPR) instead.
@@ -54,6 +68,18 @@ try {
     } else {
     if (!process.env.WEB_INPUT_ONLY) {
     await page.waitForFunction(() => window.__proof?.submits > 0, { timeout: 30000 });
+    const mirror = page.locator('[data-rune-a11y]');
+    await mirror.waitFor();
+    assert.equal(await canvas.getAttribute('aria-hidden'), 'true');
+    assert.notEqual(await mirror.evaluate(element => getComputedStyle(element).opacity), '0');
+    const send = page.getByRole('button', { name: 'Send', exact: true });
+    await send.waitFor();
+    assert.equal(await send.count(), 1);
+    if (ax) {
+        assert.equal((await axNode(mirror)).role.value, 'document');
+        assert.equal((await axNode(send)).name.value, 'Send');
+        assert.equal((await axNode(canvas)).ignored, true);
+    }
     await page.waitForTimeout(1000); // Let the initial appearance finish before measuring idle.
     assert.deepEqual(await page.locator('canvas').evaluate(c => [c.width, c.height]), [1170, 2280]);
     const beforeIdle = await page.evaluate(() => window.__proof.submits);
@@ -139,6 +165,45 @@ try {
     }
     await page.setViewportSize({ width: 390, height: 760 });
     await inputSmoke(page, url);
+    const mirror = page.locator('[data-rune-a11y]');
+    await page.getByRole('combobox', { name: 'Fruit', exact: true }).waitFor();
+    const select = page.getByRole('combobox', { name: 'Fruit', exact: true });
+    const editor = page.getByRole('textbox', { name: 'Captioned editor', exact: true });
+    const visibleCheck = page.getByRole('checkbox', { name: 'Visible checkbox', exact: true });
+    const hiddenCheck = page.getByRole('checkbox', { name: 'Hidden checkbox', exact: true });
+    const button = page.getByRole('button', { name: 'Button', exact: true });
+    assert.equal(await canvas.getAttribute('aria-hidden'), 'true');
+    assert.notEqual(await mirror.evaluate(element => getComputedStyle(element).opacity), '0');
+    assert.equal(await visibleCheck.getAttribute('aria-label'), null);
+    assert.equal(await visibleCheck.textContent(), 'Visible checkbox');
+    assert.equal(await hiddenCheck.getAttribute('aria-label'), 'Hidden checkbox');
+    assert.equal(await page.getByRole('group', { name: 'Captioned editor', exact: true }).count(), 0);
+    assert.equal(await mirror.locator('[role="group"]:not([aria-label])').count(), 0);
+    const helpId = await button.getAttribute('aria-describedby');
+    assert.ok(helpId);
+    assert.equal(await page.locator(`[id="${helpId}"]`).textContent(), 'Button help');
+    if (ax) {
+        assert.equal((await axNode(mirror)).role.value, 'document');
+        assert.equal((await axNode(canvas)).ignored, true);
+    }
+    if (ax) {
+        const selectAx = await axNode(select);
+        assert.equal(selectAx.name.value, 'Fruit');
+        assert.equal(selectAx.value.value, 'Banana');
+        assert.equal((await axNode(editor)).name.value, 'Captioned editor');
+        assert.equal((await axNode(visibleCheck)).name.value, 'Visible checkbox');
+        assert.equal((await axNode(hiddenCheck)).name.value, 'Hidden checkbox');
+        assert.equal((await axNode(button)).description.value, 'Button help');
+        await visibleCheck.focus();
+        await page.keyboard.press('Space');
+        await page.waitForFunction(() => document.querySelector('[role="checkbox"]')?.getAttribute('aria-checked') === 'true');
+        assert.equal((await axNode(visibleCheck)).properties.find(property => property.name === 'checked').value.value, 'true');
+    }
+    await button.evaluate(element => element.click());
+    await page.waitForFunction(id => !document.getElementById(id), helpId);
+    assert.equal(await button.getAttribute('aria-describedby'), null);
+    if (ax) assert.equal((await axNode(button)).description?.value, undefined);
+    assert.equal(await page.locator(`[id="${helpId}"]`).count(), 0);
     assert.deepEqual(await page.evaluate(() => window.__proof.gpuErrors), []);
     assert.deepEqual(errors.filter(e => !e.includes('404')), []);
     }

@@ -18,13 +18,13 @@ export async function inputSmoke(page, url) {
     // A touch inside the same editor must never pass focus through the canvas/body.
     await page.evaluate(() => {
         window.__editorBlurs = 0;
-        document.querySelector('textarea').addEventListener('blur', () => window.__editorBlurs++);
+        document.activeElement.addEventListener('blur', () => window.__editorBlurs++);
     });
     await page.touchscreen.tap(100, 36);
     assert.equal(await page.evaluate(() => window.__editorBlurs), 0);
 
     // Gboard reopens an existing word: include its unchanged prefix in the preedit range.
-    await page.locator('textarea').evaluate(field => {
+    await page.locator('textarea:focus').evaluate(field => {
         field.dispatchEvent(new CompositionEvent('compositionstart'));
         field.value = 'hello'; field.setSelectionRange(5, 5);
         field.dispatchEvent(new CompositionEvent('compositionupdate', { data: 'hello' }));
@@ -33,12 +33,12 @@ export async function inputSmoke(page, url) {
     await settle();
     assert.equal((await snapshot()).display, 'hello');
     assert.equal((await snapshot()).plain, 'hello ');
-    await page.locator('textarea').evaluate(field => field.dispatchEvent(new CompositionEvent('compositionend', { data: 'hello' })));
+    await page.locator('textarea:focus').evaluate(field => field.dispatchEvent(new CompositionEvent('compositionend', { data: 'hello' })));
     await settle();
     assert.equal((await snapshot()).plain, 'hello');
 
     // Enter with keyCode 229 may have no usable keydown; beforeinput is authoritative.
-    const lineBreak = async (inputType, shift = false) => page.locator('textarea').evaluate((field, { inputType, shift }) => {
+    const lineBreak = async (inputType, shift = false) => page.locator('textarea:focus').evaluate((field, { inputType, shift }) => {
         field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', keyCode: 229, shiftKey: shift, bubbles: true }));
         const event = new InputEvent('beforeinput', { inputType, cancelable: true, bubbles: true });
         field.dispatchEvent(event);
@@ -80,22 +80,25 @@ export async function inputSmoke(page, url) {
     await settle();
     assert.equal((await snapshot()).submits, 3);
 
-    await page.keyboard.press('Tab'); // A non-editor control must return DOM focus to canvas.
-    assert.equal(await page.evaluate(() => document.activeElement.tagName), 'CANVAS');
+    await page.keyboard.press('Tab');
     await page.keyboard.press('Meta+k');
     await settle();
-    assert.equal((await snapshot()).shortcuts, 1, 'canvas shortcuts survive the editor-to-canvas focus handoff');
+    assert.equal((await snapshot()).shortcuts, 1, 'shortcuts survive leaving the editor');
     await page.keyboard.press('Shift+Tab');
     assert.equal(await page.evaluate(() => document.activeElement.type), 'password');
     await page.keyboard.press('Escape');
-    assert.equal(await page.evaluate(() => document.activeElement.tagName), 'CANVAS');
     await page.keyboard.press('Meta+k');
     await settle();
     assert.equal((await snapshot()).shortcuts, 2);
 
     await page.touchscreen.tap(100, 36);
     await page.touchscreen.tap(300, 500); // Background tap dismisses the editor.
-    assert.equal(await page.evaluate(() => document.activeElement.tagName), 'CANVAS');
+    const dismissed = await snapshot();
+    await page.keyboard.insertText('not inserted');
+    await settle();
+    const afterDismiss = await snapshot();
+    assert.deepEqual([afterDismiss.plain, afterDismiss.single, afterDismiss.secretLength],
+        [dismissed.plain, dismissed.single, dismissed.secretLength], 'typing after dismissal must not edit a field');
     // Dispatch a burst in one JS turn: movement/wheels must wait for rAF, not run frames.
     const polls = await page.evaluate(() => {
         const before = window.__inputProof.polls;
@@ -121,6 +124,6 @@ export async function inputSmoke(page, url) {
     await settle();
     assert.equal((await snapshot()).visible, true);
     console.log(JSON.stringify({ inputRegressions: 'passed', checks: ['stable editor focus', 'recomposition range',
-        'beforeinput Enter', 'multiline vs single-line', 'password sink and deletion', 'Tab to canvas',
+        'beforeinput Enter', 'multiline vs single-line', 'password sink and deletion', 'Tab traversal',
         'Escape shortcuts', 'outside dismiss', 'coalesced pointer frames', 'visibility', 'app title', 'nonfatal window requests'] }));
 }
