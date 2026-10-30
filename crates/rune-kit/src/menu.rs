@@ -125,7 +125,7 @@ impl MenuItem {
         content = content.child(text(self.label.clone()).key("label").font(font).color(ink).truncate());
         let mut e = row()
             .key(key.clone())
-            .role("menuitem")
+            .role(if self.checked.is_some() { "menuitemcheckbox" } else { "menuitem" })
             .label(self.label)
             .radius(if standard { k.radius.sm } else { 4.0 })
             .gap(8.0)
@@ -156,10 +156,14 @@ impl MenuItem {
             );
         }
         if let Some(on) = self.checked {
+            e = e.checked(on);
             let mark = icon(k.glyph.check_small, 14.0)
                 .color(if standard { c.std_icon } else { c.icon_base })
                 .opacity(if on { 1.0 } else { 0.0 });
             e = e.child(el().key("indicator").size(16.0, 16.0).center().child(mark));
+        }
+        if self.sub.is_some() {
+            e = e.expanded(self.sub.as_ref().is_some_and(|(_, open)| *open));
         }
         if let Some((entries, open)) = self.sub {
             e = e.child(icon(k.glyph.caret_right, 16.0).key("chevron").color(if standard {
@@ -274,6 +278,7 @@ impl Menu {
         self.at = Some((x, y));
         self
     }
+
     /// Presses outside and Escape close the menu. While open it holds keyboard focus.
     pub fn on_close<S: 'static>(mut self, f: impl Fn(&mut S) + 'static) -> Self {
         self.dismiss = Some(dismissal(format!("{}-scrim", self.key), f));

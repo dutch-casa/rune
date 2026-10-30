@@ -499,6 +499,45 @@ fn virtual_rows_inside_memos_layout_reads_live_values_and_duplicate_keys_match_f
 }
 
 #[test]
+fn disabled_ancestors_update_memoized_semantics_and_action_admission() {
+    struct State { memo: bool, disabled: bool, presses: usize }
+    fn view(s: &State, _: &mut Cx<State>) -> El {
+        col().size(200.0, 200.0).disabled(s.disabled).child(
+            maybe_memo(s.memo, "panel", 0u32, || {
+                col().size(160.0, 90.0)
+                    .child(el().key("button").role("button").label("Go").size(80.0, 30.0)
+                        .focusable(true).on_press(|s: &mut State| s.presses += 1))
+                    .child(el().key("own-disabled").role("button").label("Off").size(80.0, 30.0)
+                        .focusable(true).disabled(true).on_press(|s: &mut State| s.presses += 1))
+            })
+        )
+    }
+    let mut memo_rt = Runtime::new(State { memo: true, disabled: false, presses: 0 }, view, (200.0, 200.0), Env::default());
+    let mut fresh_rt = Runtime::new(State { memo: false, disabled: false, presses: 0 }, view, (200.0, 200.0), Env::default());
+    for disabled in [false, true, false, true, false] {
+        step_both(&mut memo_rt, &mut fresh_rt, 0.0, "disabled ancestor", |rt| {
+            rt.update(|s, _| s.disabled = disabled);
+        });
+        for rt in [&mut memo_rt, &mut fresh_rt] {
+            let button = rt.nodes.iter().find(|n| n.key.as_deref() == Some("button")).unwrap();
+            let path = button.path.clone();
+            assert_eq!(button.a11y.disabled, disabled);
+            assert!(rt.nodes.iter().find(|n| n.key.as_deref() == Some("own-disabled")).unwrap().a11y.disabled);
+            let info = rt.elements();
+            assert_eq!(info.iter().find(|e| e.path == path).unwrap().disabled, disabled);
+            let items = rt.web_a11y_items();
+            let item = items.iter().find(|item| item.path == path).unwrap();
+            assert_eq!(item.disabled, disabled);
+            assert_eq!(item.pressable, !disabled);
+            assert_eq!(rt.web_a11y_action(&serde_json::json!({"kind": "a11y_press", "path": path})), !disabled);
+            rt.frame(0.0);
+        }
+    }
+    assert_eq!(memo_rt.state.presses, 3);
+    assert_eq!(fresh_rt.state.presses, 3);
+}
+
+#[test]
 fn self_prefix_rebase_box_into_box_box_and_back_matches_fresh_build() {
     fn view(s: &(bool, bool), _: &mut Cx<(bool, bool)>) -> El {
         let leaf = maybe_memo(s.0, "box", 0u32, || {

@@ -138,10 +138,12 @@ impl Select {
     }
 
     pub fn build(mut self, k: &Kit, layer: &mut Vec<El>) -> El {
-        let trigger = self.field(k);
+        let list_key = format!("{}-listbox", self.key);
+        let mut trigger = self.field(k);
         if self.state == State::Disabled || !self.open {
             return trigger;
         }
+        trigger = trigger.controls(list_key.clone());
         let c = &k.c;
         let anchor_key = format!("{}-trigger", self.key);
         let modal = mount_dismiss(self.dismiss, layer);
@@ -203,7 +205,7 @@ impl Select {
                 .max_w(368.0)
                 .radius(6.0)
                 .fill(c.layer_01)
-                .child(col().key("listbox").role("listbox").focus_group().max_h(192.0).min_h(0.0).shrink().child(fit_scroll(list))),
+                .child(col().key(list_key).role("listbox").focus_group().max_h(192.0).min_h(0.0).shrink().child(fit_scroll(list))),
             &k.elevation.floating,
         );
         if let Some(modal) = modal {
@@ -224,8 +226,8 @@ impl Select {
             None => (self.placeholder.clone(), if red { c.danger.fg } else { c.text_faint }),
         };
         let chevron: &'static Icon = if self.open { k.glyph.chevron_up } else { k.glyph.chevron_down };
-        let mut trigger = row().key(anchor_key.clone()).role("combobox").label(label.clone()).center_y()
-            .focusable(!disabled).focus_ring(1.0, 0.0, c.border_focus);
+        let mut trigger = row().key(anchor_key.clone()).role("combobox").fallback_label(label.clone())
+            .expanded(self.open).disabled(disabled).center_y().focusable(!disabled).focus_ring(1.0, 0.0, c.border_focus);
         trigger = match self.appearance {
             SelectAppearance::Inline => {
                 let font = TextStyle { line_height: 16.0, ..k.ty.ui_medium };
@@ -281,6 +283,9 @@ impl Select {
                 t
             }
         };
+        if self.invalid && !disabled {
+            trigger = trigger.invalid(true);
+        }
         if disabled {
             return trigger.dim(0.5);
         }

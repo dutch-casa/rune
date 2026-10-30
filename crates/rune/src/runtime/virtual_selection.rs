@@ -663,9 +663,8 @@ impl<S: 'static> Runtime<S> {
         if self.text_sel.path.as_deref() != Some(h_path.as_str()) {
             self.text_sel.path = Some(h_path);
         }
-        let h_content = self.end_content(h).to_owned();
-        if self.text_sel.content != h_content {
-            self.text_sel.content = h_content;
+        if self.text_sel.content != self.end_content(h) {
+            self.text_sel.content = self.end_content(h).to_owned();
         }
         if f != h {
             let (f_path, f_content) = (self.end_path(f).to_owned(), self.end_content(f).to_owned());

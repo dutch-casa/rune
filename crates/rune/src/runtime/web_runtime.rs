@@ -14,33 +14,11 @@ pub(crate) struct Mirror {
     pub secure: bool,
 }
 
-/// Read at most 512 UTF-16 units on each side, without scanning the document prefix.
-fn context_window(edit: &crate::TextEdit) -> (usize, &str, u32, u32) {
-    let (a, b) = edit.range();
-    let (raw_anchor, raw_focus) = if edit.anchor <= edit.focus { (a, b) } else { (b, a) };
-    let mut start = a;
-    let mut units = 0;
-    for (i, ch) in edit.text[..a].char_indices().rev() {
-        if units + ch.len_utf16() > 512 { break; }
-        units += ch.len_utf16();
-        start = i;
-    }
-    let mut end = b;
-    let mut units = 0;
-    for ch in edit.text[b..].chars() {
-        if units + ch.len_utf16() > 512 { break; }
-        units += ch.len_utf16();
-        end += ch.len_utf8();
-    }
-    let anchor = edit.text[start..raw_anchor].encode_utf16().count() as u32;
-    let focus = edit.text[start..raw_focus].encode_utf16().count() as u32;
-    (start, &edit.text[start..end], anchor, focus)
-}
 
 impl Mirror {
     fn update(&mut self, key: &str, edit: Option<&crate::TextEdit>) -> bool {
         let secure = edit.is_some_and(|e| e.is_secure());
-        let (base, text, anchor, focus) = edit.filter(|_| !secure).map(context_window).unwrap_or((0, "", 0, 0));
+        let (base, text, anchor, focus) = edit.filter(|_| !secure).map(super::web_a11y::context_window).unwrap_or((0, "", 0, 0));
         if self.key == key && self.base == base && self.text == text && self.anchor == anchor
             && self.focus == focus && self.secure == secure { return false; }
         self.key.clear(); self.key.push_str(key);
@@ -62,6 +40,111 @@ pub(super) struct TouchScroll {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    struct ReadonlyForm {
+        edit: crate::TextEdit,
+        default_presses: usize,
+    }
+
+    fn readonly_view(s: &ReadonlyForm, _: &mut Cx<ReadonlyForm>) -> El {
+        crate::col().size(200.0, 100.0)
+            .child(crate::text_input(&s.edit, crate::TextStyle::new(14.0, 400.0))
+                .key("readonly").size(180.0, 32.0).single_line())
+            .child(crate::el().key("default").size(180.0, 32.0).role("button")
+                .focusable(true).default_button()
+                .on_press(|s: &mut ReadonlyForm| s.default_presses += 1))
+    }
+
+    fn focused_readonly() -> Runtime<ReadonlyForm> {
+        let mut rt = Runtime::new(
+            ReadonlyForm { edit: crate::TextEdit::new("read only"), default_presses: 0 },
+            readonly_view, (200.0, 100.0), Env::default(),
+        );
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Tab, mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.focused_key().as_deref(), Some("readonly"));
+        assert!(!rt.state.edit.focused, "focus does not grant edit authority");
+        rt
+    }
+
+    #[test]
+    fn readonly_return_reaches_the_default_button_without_editing() {
+        let mut rt = focused_readonly();
+        rt.key(crate::KeyEvent { key: crate::Key::Text("x".into()), mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.state.edit.text, "read only");
+        rt.key(crate::KeyEvent { key: crate::Key::Enter, mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.state.default_presses, 1, "Return belongs to the default button");
+        assert_eq!(rt.state.edit.text, "read only");
+    }
+
+    #[test]
+    fn readonly_focus_does_not_enable_native_ime() {
+        let rt = focused_readonly();
+        assert!(rt.ime_area.is_none(), "a read-only field cannot accept IME input");
+    }
+
+    #[test]
+    fn readonly_select_all_and_copy_do_not_edit_the_model() {
+        let mut rt = focused_readonly();
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert_eq!(rt.copy_request.take().as_deref(), Some("read only"));
+        assert_eq!(rt.state.edit.text, "read only");
+    }
+
+    #[test]
+    fn readonly_selection_survives_rebuild_and_tracks_text_lifetime() {
+        let mut rt = focused_readonly();
+        let text = "é🦀".repeat(2048);
+        rt.update(|s, _| s.edit.replace_text(text.clone()));
+        rt.frame(0.0);
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.update(|s, _| s.default_presses += 1);
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert_eq!(rt.copy_request.take().as_deref(), Some(text.as_str()));
+        assert_eq!(rt.state.edit.text, text);
+        assert!(!rt.state.edit.focused);
+
+        rt.update(|s, _| s.edit.replace_text(""));
+        rt.frame(0.0);
+        assert!(rt.text_selection().is_none(), "changed text invalidates the old selection");
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert_eq!(rt.copy_request.take().as_deref(), Some(""));
+    }
+
+    #[test]
+    fn readonly_secure_field_never_retains_or_copies_its_text() {
+        fn view(s: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
+            crate::text_input(s, crate::TextStyle::new(14.0, 400.0))
+                .key("secret").size(180.0, 32.0).single_line().secure()
+        }
+        let mut rt = Runtime::new(crate::TextEdit::new("secret 🦀"), view, (200.0, 100.0), Env::default());
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Tab, mods: crate::Mods::default() });
+        rt.frame(0.0);
+        assert!(rt.has_secure_focus());
+        let mods = crate::Mods { cmd: true, ..Default::default() };
+        rt.key(crate::KeyEvent { key: crate::Key::Command('a'), mods });
+        rt.frame(0.0);
+        rt.key(crate::KeyEvent { key: crate::Key::Command('c'), mods });
+        rt.frame(0.0);
+        assert!(rt.copy_request.is_none());
+        assert!(rt.text_selection().is_none());
+        assert_eq!(rt.state.text, "secret 🦀");
+    }
 
     #[test]
     fn utf16_replacement_preserves_callbacks_and_rejects_stale_context() {
@@ -151,7 +234,7 @@ mod tests {
         for &a in boundaries.iter().step_by(157) {
             for &f in boundaries.iter().step_by(271) {
                 edit.anchor = a; edit.focus = f;
-                let (base, text, anchor, focus) = context_window(&edit);
+                let (base, text, anchor, focus) = super::super::web_a11y::context_window(&edit);
                 assert_eq!(base + byte_at(text, anchor as usize).unwrap(), a);
                 assert_eq!(base + byte_at(text, focus as usize).unwrap(), f);
                 let before = edit.text[base..a.min(f)].encode_utf16().count();
@@ -263,6 +346,21 @@ mod tests {
             (crate::Key::Command(':'), Some(Period), false),
             (crate::Key::Command('k'), Some(KeyK), false),
         ]);
+    }
+    #[test]
+    fn browser_key_release_allows_a_fresh_activation() {
+        fn view(_: &usize, _: &mut Cx<usize>) -> El {
+            crate::el().size(100.0, 40.0).role("button").focusable(true).default_button()
+                .on_press(|count: &mut usize| *count += 1)
+        }
+        let mut rt = Runtime::new(0_usize, view, (100.0, 40.0), Env::default());
+        rt.frame(0.0);
+        let down = json!({"kind":"key", "key":"Enter", "code":"Enter"});
+        let up = json!({"kind":"key_up", "key":"Enter", "code":"Enter"});
+        rt.web_key(&down); rt.frame(0.0);
+        rt.web_key(&up); rt.frame(0.0);
+        rt.web_key(&down); rt.frame(0.0);
+        assert_eq!(rt.state, 2);
     }
 }
 
@@ -387,11 +485,15 @@ impl<S: 'static> Runtime<S> {
             None => mirror.update("", None),
         }
     }
+    pub(crate) fn web_can_paste(&self, key: &str) -> bool {
+        self.focused.as_deref() == Some(key) && self.focused_input().is_some_and(|input| input.access.is_some())
+    }
 
     pub(crate) fn web_key(&mut self, event: &serde_json::Value) -> bool {
         let flag = |key: &str| event[key].as_bool().unwrap_or(false);
         let (shift, ctrl, alt, logo) = (flag("shift"), flag("ctrl"), flag("alt"), flag("meta"));
         let mods = crate::Mods { shift, alt, ctrl, logo, cmd: logo || ctrl };
+        let up = event["kind"] == "key_up";
         let key = match event["key"].as_str().unwrap_or_default() {
             "Enter" => crate::Key::Enter, "Tab" => crate::Key::Tab, "Escape" => crate::Key::Escape,
             "ArrowLeft" => crate::Key::Left, "ArrowRight" => crate::Key::Right,
@@ -401,16 +503,19 @@ impl<S: 'static> Runtime<S> {
             "Backspace" => crate::Key::Backspace, "Delete" => crate::Key::Delete,
             "ContextMenu" => crate::Key::ContextMenu,
             name if name.chars().count() == 1 && mods.cmd => crate::Key::Command(name.chars().next().unwrap().to_ascii_lowercase()),
+            name if name.chars().count() == 1 => crate::Key::Text(name.to_owned()),
             _ => return false,
         };
         let event_key = crate::KeyEvent { key, mods };
-        let activate = event_key.key == crate::Key::Tab;
+        let activate = !up && event_key.key == crate::Key::Tab;
         let repeat = flag("repeat");
         let code = event["code"].as_str().filter(|c| !c.is_empty() && !c.contains('+'))
             .and_then(|c| c.parse::<crate::Shortcut>().ok())
             .map(|s| s.physical_key());
         if let Some(key) = code {
-            self.physical_with_fallback(crate::PhysicalInput::Key { key, mods, pressed: true, repeat }, Some(event_key));
+            self.physical_with_fallback(crate::PhysicalInput::Key { key, mods, pressed: !up, repeat }, Some(event_key));
+        } else if up {
+            self.key_up(event_key);
         } else if repeat {
             self.repeat_key(event_key);
         } else {

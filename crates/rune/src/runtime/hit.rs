@@ -131,10 +131,12 @@ impl<S: 'static> Runtime<S> {
     /// The single reachable editor in a textbox. Only resolve descendants on presses;
     /// hover hit testing and cursor updates use the container's role directly.
     pub(super) fn textbox_input(&self, i: usize) -> Option<usize> {
-        if self.nodes[i].input.is_some() { return self.can_focus(i).then_some(i); }
+        if self.nodes[i].input.is_some() {
+            return (self.nodes[i].input.as_ref().is_some_and(|input| input.access.is_some()) && self.can_focus(i)).then_some(i);
+        }
         if self.nodes[i].role != "textbox" { return None; }
         let mut inputs = (0..self.nodes.len()).filter(|&j| {
-            self.nodes[j].input.is_some()
+            self.nodes[j].input.as_ref().is_some_and(|input| input.access.is_some())
                 && self.can_focus(j)
                 && std::iter::successors(self.nodes[j].parent, |&p| self.nodes[p].parent).any(|p| p == i)
         });

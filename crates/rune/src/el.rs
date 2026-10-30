@@ -17,6 +17,7 @@ pub(crate) use crate::clipboard::tx::{ClipboardRead, ReadFn};
 use crate::text::{Icon, Link, Span};
 use crate::tok::TextStyle;
 
+use crate::el_a11y::A11y;
 pub use crate::el_tx::{Shell, Tx};
 pub(crate) use crate::el_tx::{SelectRequest, TraceCalls};
 
@@ -107,13 +108,6 @@ pub(crate) type DragOutFn = Rc<dyn Fn(crate::states::StatesRef<'_>) -> Option<cr
 pub(crate) type DragEndFn = Rc<dyn Fn(crate::states::States<'_>, crate::DragOutcome, &mut Tx)>;
 pub(crate) type EditFn = Rc<dyn for<'a> Fn(crate::states::States<'a>) -> &'a mut TextEdit>;
 
-/// Accessibility state beyond role and label (`El::level`, `El::expanded`, `El::secure`).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct A11y {
-    pub level: Option<u32>,
-    pub expanded: Option<bool>,
-    pub secure: bool,
-}
 
 pub(crate) use crate::el_focus::FocusSpec;
 pub(crate) use crate::el_handlers::Handlers;
@@ -481,7 +475,7 @@ pub struct El {
     /// `El::aspect_fit`'s width over height; 0 when unset.
     pub(crate) aspect_fit: f32,
     pub(crate) selection_group: bool,
-    /// `El::level` and `El::expanded`.
+    /// Accessibility state beyond role and label.
     pub(crate) a11y: A11y,
     pub(crate) inert: bool,
 }
@@ -1072,23 +1066,6 @@ impl El {
     /// than one reachable editor inside, the container does nothing special.
     pub fn role(mut self, role: &'static str) -> Self {
         self.role = role;
-        self
-    }
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-    /// An outline row's depth for accessibility, 1 at the top (ARIA `aria-level`), as a
-    /// `treeitem` carries it. The element tree reports it as `level`.
-    pub fn level(mut self, level: u32) -> Self {
-        self.a11y.level = Some(level);
-        self
-    }
-    /// Whether a disclosure (a tree row with children, a collapsible header) is open, for
-    /// accessibility (ARIA `aria-expanded`). Leave it unset on an element that can't open.
-    /// The element tree reports it as `expanded`.
-    pub fn expanded(mut self, open: bool) -> Self {
-        self.a11y.expanded = Some(open);
         self
     }
     /// Turn this element's icon by `radians`, clockwise about its centre: a disclosure chevron

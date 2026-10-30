@@ -206,7 +206,7 @@ fn node_cold_needed(c: &NodeCold) -> bool {
         || c.sticky.is_some()
         || c.growth.is_some()
         || c.glide.is_some()
-        || c.a11y != crate::el::A11y::default()
+        || c.a11y != crate::el_a11y::A11y::default()
         || c.pixel_aspect.is_some()
         || c.aspect_fit.is_some()
         || c.material.is_some()
@@ -391,6 +391,8 @@ fn flatten_owned(
     }
     let text_meta = prepare_text(&mut text, input.as_deref(), scale);
     let inert = inert || parent.is_some_and(|p| nodes[p].inert);
+    let mut a11y = a11y;
+    a11y.disabled |= parent.is_some_and(|p| nodes[p].a11y.disabled);
     inherit_hover_within(&mut vis, above.as_ref(), parent, nodes);
     let pixel_aspect = vis.pixels.as_ref()
         .filter(|_| style.aspect_ratio.is_none() && style.size.width.is_auto() != style.size.height.is_auto())
@@ -563,6 +565,7 @@ fn flatten_ref(
     let input = el.input.clone();
     let text_meta = prepare_text(&mut text, input.as_deref(), scale);
     let inert = el.inert || parent.is_some_and(|p| nodes[p].inert);
+    let parent_disabled = parent.is_some_and(|p| nodes[p].a11y.disabled);
     let mut vis = el.vis.clone();
     inherit_hover_within(&mut vis, el.above.as_ref(), parent, nodes);
     let pixel_aspect = vis.pixels.as_ref()
@@ -608,7 +611,8 @@ fn flatten_ref(
         || el.sticky.is_some()
         || el.growth.is_some()
         || el.glide.is_some()
-        || el.a11y != crate::el::A11y::default()
+        || el.a11y != crate::el_a11y::A11y::default()
+        || parent_disabled
         || pixel_aspect.is_some()
         || aspect_fit.is_some()
         || el.material.is_some()
@@ -636,7 +640,11 @@ fn flatten_ref(
             sticky: el.sticky.clone(),
             growth: el.growth.clone(),
             glide: el.glide,
-            a11y: el.a11y,
+            a11y: {
+                let mut a11y = el.a11y.clone();
+                a11y.disabled |= parent_disabled;
+                a11y
+            },
             pixel_aspect,
             aspect_fit,
             material: el.material,

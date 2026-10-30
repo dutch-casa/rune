@@ -83,6 +83,12 @@ export function viewport(canvas, callback, embedded) {
     const probe = document.createElement('div');
     probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
     document.body.append(probe);
+    // Keep physical viewport coordinates independent of inherited text direction and writing mode.
+    if (!embedded) {
+        canvas.style.direction = 'ltr';
+        canvas.style.writingMode = 'horizontal-tb';
+    }
+    let disposed = false;
     const update = () => {
         if (!embedded) {
             const v = window.visualViewport;
@@ -117,8 +123,9 @@ export function viewport(canvas, callback, embedded) {
     window.addEventListener('blur', focus);
     document.addEventListener('visibilitychange', visibility);
     // Mount is called while Rust is installing the shell; enter it only after installation.
-    queueMicrotask(() => { update(); reduced(); focus(); visibility(); });
+    queueMicrotask(() => { if (!disposed) { update(); reduced(); focus(); visibility(); } });
     return () => {
+        disposed = true;
         dprMedia?.removeEventListener('change', onDpr);
         window.visualViewport?.removeEventListener('resize', update);
         window.visualViewport?.removeEventListener('scroll', update);

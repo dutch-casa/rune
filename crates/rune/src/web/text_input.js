@@ -1,0 +1,170 @@
+// Native controls retain their identity while Rust owns the editable value.
+const high = n => n >= 0xd800 && n <= 0xdbff;
+const low = n => n >= 0xdc00 && n <= 0xdfff;
+function boundary(text, at, forward) {
+    if (at > 0 && at < text.length && high(text.charCodeAt(at - 1)) && low(text.charCodeAt(at))) at += forward ? 1 : -1;
+    return at;
+}
+
+function replacement(old, next, composition, caret) {
+    let start = 0;
+    while (start < old.length && start < next.length && old[start] === next[start]) start++;
+    start = boundary(old, start, false);
+    let end = old.length, nextEnd = next.length;
+    while (end > start && nextEnd > start && old[end - 1] === next[nextEnd - 1]) { end--; nextEnd--; }
+    const adjusted = boundary(old, end, true) - end;
+    end += adjusted; nextEnd += adjusted;
+    if (composition && caret >= composition.length && next.slice(caret - composition.length, caret) === composition) {
+        const from = caret - composition.length, to = caret + old.length - next.length;
+        if (from <= to && to <= old.length) {
+            if (old === next) { start = from; end = to; nextEnd = caret; }
+            else { start = Math.min(start, from); end = Math.max(end, to); nextEnd = end + next.length - old.length; }
+        }
+    }
+    return { start, end, text: next.slice(start, nextEnd) };
+}
+
+export function createEditor(h, key, secure, combobox = false) {
+    const field = document.createElement(secure || combobox ? 'input' : 'textarea');
+    if (secure) {
+        field.type = 'password';
+        field.autocomplete = 'off';
+        field.setAttribute('autocorrect', 'off');
+        field.setAttribute('autocapitalize', 'off');
+        field.spellcheck = false;
+    } else if (combobox) {
+        field.autocomplete = 'off';
+        field.setAttribute('autocapitalize', 'off');
+    } else field.setAttribute('autocapitalize', 'sentences');
+    field.inputMode = matchMedia('(pointer: coarse)').matches ? 'none' : 'text';
+    const e = { field, key, secure, combobox: !!combobox, value: '', base: 0, composing: false, composition: '', shift: false,
+        handledInput: null, syncing: false, disposed: false, listeners: [] };
+    const listen = (name, handler) => {
+        field.addEventListener(name, handler);
+        e.listeners.push(() => field.removeEventListener(name, handler));
+    };
+    const current = () => h.context?.key === key && h.context.secure === secure && !field.readOnly && !field.disabled;
+    const send = event => { if (!e.disposed) h.send(event); };
+    const changed = (preedit = false) => {
+        if (!current()) return;
+        const backward = field.selectionDirection === 'backward';
+        send({ kind: preedit ? 'preedit' : 'edit', key, base: e.base, expected: e.value,
+            ...replacement(e.value, field.value, preedit ? e.composition : '', field.selectionEnd),
+            anchor: backward ? field.selectionEnd : field.selectionStart,
+            focus: backward ? field.selectionStart : field.selectionEnd });
+    };
+    const syntheticKey = (name, event = {}) => {
+        const data = { kind: 'key', key: name, code: event.code ?? '', shift: !!event.shiftKey,
+            ctrl: !!event.ctrlKey, alt: !!event.altKey, meta: !!event.metaKey, repeat: false };
+        send(data);
+        send({ ...data, kind: 'key_up' });
+    };
+    listen('input', event => {
+        if (secure) {
+            const text = field.value;
+            field.value = '';
+            if (text && current()) send({ kind: 'secure', key, text });
+        } else changed(e.composing || event.isComposing);
+    });
+    if (!secure) {
+        listen('compositionstart', () => { e.composing = true; e.composition = ''; });
+        listen('compositionupdate', event => {
+            e.composition = event.data ?? '';
+            queueMicrotask(() => { if (!e.disposed && e.composing) changed(true); });
+        });
+        listen('compositionend', () => {
+            changed();
+            e.composing = false; e.composition = '';
+            send({ kind: 'sync' });
+        });
+        listen('select', () => {
+            if (!current() || h.syncing || e.syncing || e.composing || document.activeElement !== field) return;
+            const backward = field.selectionDirection === 'backward';
+            send({ kind: 'selection', key, base: e.base, expected: e.value,
+                anchor: backward ? field.selectionEnd : field.selectionStart,
+                focus: backward ? field.selectionStart : field.selectionEnd });
+        });
+    }
+    listen('paste', event => {
+        if (field.readOnly || field.disabled) return;
+        event.preventDefault();
+        if (!current()) return;
+        const data = event.clipboardData;
+        h.image = secure ? undefined : [...(data?.items ?? [])].find(i => i.kind === 'file' && i.type === 'image/png')?.getAsFile() ?? undefined;
+        try {
+            send({ kind: 'paste', key: e.key, text: data?.getData('text/plain') ?? '', html: secure ? '' : data?.getData('text/html') ?? '', image: !!h.image });
+        } finally {
+            if (h.syncing) queueMicrotask(() => { h.image = undefined; });
+            else h.image = undefined;
+        }
+    });
+    listen('beforeinput', event => {
+        if (!current()) return;
+        if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
+            event.preventDefault();
+            const handled = e.handledInput === 'Enter';
+            if (handled) e.handledInput = null;
+            if (!handled && !e.composing && !event.isComposing) syntheticKey('Enter', { shiftKey: e.shift, code: 'Enter' });
+        } else if (secure && event.inputType.startsWith('delete')) {
+            event.preventDefault();
+            const forward = event.inputType.endsWith('Forward');
+            const name = forward ? 'Delete' : 'Backspace';
+            const handled = e.handledInput === name;
+            if (handled) e.handledInput = null;
+            if (!handled) syntheticKey(name, { altKey: event.inputType.includes('Word'), code: name });
+        }
+    });
+    listen('keydown', event => {
+        e.shift = event.shiftKey;
+        if (event.keyCode === 229) { e.handledInput = null; return; }
+        const modelCopy = !field.readOnly && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c';
+        if ((!modelCopy && h.passThrough(event, true)) || event.isComposing || e.composing || event.key === 'Tab') return;
+        const chord = event.metaKey || event.ctrlKey;
+        const navigation = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
+        if (field.readOnly) {
+            const native = navigation.includes(event.key) || (chord && ['a', 'c', 'x', 'v', 'insert'].includes(event.key.toLowerCase()));
+            if (event.key !== 'Escape' && (!chord || native)) return;
+        } else {
+            const editing = event.key === 'Enter' || event.key === 'Escape' || navigation.includes(event.key)
+                || (secure && (event.key === 'Backspace' || event.key === 'Delete'));
+            if (!chord && !editing) return;
+            if (chord && event.key.toLowerCase() === 'v') return;
+        }
+        event.preventDefault();
+        if (event.key === 'Enter' || (secure && (event.key === 'Backspace' || event.key === 'Delete'))) e.handledInput = event.key;
+        h.forwardKeyDown(event);
+    });
+    listen('keyup', event => {
+        e.shift = event.shiftKey;
+        if (e.handledInput === event.key) e.handledInput = null;
+    });
+    listen('focus', () => { if (!h.syncing) e.handledInput = null; });
+    listen('blur', () => { if (!h.syncing) e.shift = false; });
+    e.sync = (text, base, anchor, focus) => {
+        if (e.composing) return;
+        e.syncing = true;
+        e.base = base; e.value = secure ? '' : text;
+        if (secure) field.value = '';
+        else {
+            if (field.value !== text) field.value = text;
+            if (!field.readOnly) {
+                const start = Math.min(anchor, focus), end = Math.max(anchor, focus), direction = anchor > focus ? 'backward' : 'forward';
+                if (field.selectionStart !== start || field.selectionEnd !== end || field.selectionDirection !== direction) field.setSelectionRange(start, end, direction);
+            }
+        }
+        e.syncing = false;
+    };
+    e.destroy = () => {
+        e.disposed = true;
+        for (const remove of e.listeners) remove();
+        field.value = ''; e.value = '';
+        field.remove();
+    };
+    return e;
+}
+export function sync(h, key, text, base, anchor, focus, secure) {
+    h.context = key ? { key, text: secure ? '' : text, base, anchor, focus, secure } : null;
+    const entry = h.editors.get(key);
+    if (h.context && entry?.editor.secure === secure) entry.editor.sync(h.context.text, base, anchor, focus);
+}
+

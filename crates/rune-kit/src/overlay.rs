@@ -6,7 +6,9 @@
 //! [`crate::root`]. Content is `El::anchored` to the trigger, so it follows layout, flips when
 //! it doesn't fit, and paints above everything mounted before it.
 
-use rune::{Align, Color, El, ScrollSpec, Shadow, Side, TextStyle, Transition, col, el, row, text};
+use std::rc::Rc;
+
+use rune::{Align, Color, El, KeyEvent, ScrollSpec, Shadow, Side, TextStyle, Transition, Tx, col, el, row, text};
 use rune_motion::{Effect, Spring, SpringPair, Vec2, tokens};
 
 use crate::{Acts, ControlSize, IconButton, IconButtonVariant, Kit, shadows};
@@ -128,6 +130,7 @@ pub struct Popover {
     padding: f32,
     close: Acts,
     dismiss: Option<El>,
+    dismiss_key: Option<Rc<dyn Fn(El) -> El>>,
 }
 
 impl Popover {
@@ -144,6 +147,7 @@ impl Popover {
             padding: 12.0,
             close: Acts::default(),
             dismiss: None,
+            dismiss_key: None,
         }
     }
     pub fn trigger(mut self, t: El) -> Self {
@@ -180,22 +184,43 @@ impl Popover {
         self.gutter = g;
         self
     }
-    /// Close requests: the close button and presses outside.
+    /// Close requests: the close button, presses outside, and Escape while focus is inside.
+    /// The surface stays non-modal, so Tab can still leave it.
     pub fn on_close<S: 'static>(mut self, f: impl Fn(&mut S) + Clone + 'static) -> Self {
-        self.dismiss = Some(scrim(format!("{}-scrim", self.key), f.clone()));
-        self.close.press(f);
+        let close = Rc::new(f);
+        let outside = close.clone();
+        let key = close.clone();
+        self.dismiss = Some(scrim(format!("{}-scrim", self.key), move |s: &mut S| outside(s)));
+        self.close.press(move |s: &mut S| close(s));
+        self.dismiss_key = Some(Rc::new(move |e: El| {
+            let key = key.clone();
+            e.on_key(move |s: &mut S, ev: &KeyEvent, tx: &mut Tx| {
+                if ev.key != rune::Key::Escape || tx.key_repeat() || ev.mods != rune::Mods::default() {
+                    return false;
+                }
+                key(s);
+                true
+            })
+        }));
         self
     }
 
     pub fn build(self, k: &Kit, layer: &mut Vec<El>) -> El {
         let c = &k.c;
         let anchor_key = format!("{}-trigger", self.key);
-        let trigger = row().key(anchor_key.clone()).role("button").children(self.trigger);
+        let dismiss_key = self.dismiss_key.clone();
+        let mut trigger = row().key(anchor_key.clone()).children(self.trigger);
         if !self.open {
             return trigger;
         }
+        if let Some(bind) = dismiss_key.clone() {
+            trigger = bind(trigger);
+        }
         let mut content = col().key(format!("{}-content", self.key)).role("dialog")
             .focus_return(&anchor_key).min_w(200.0).max_w(320.0);
+        if let Some(bind) = dismiss_key {
+            content = bind(content);
+        }
         if let Some(t) = &self.title {
             let close = IconButton::new(k.glyph.close)
                 .variant(IconButtonVariant::Ghost)

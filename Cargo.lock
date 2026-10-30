@@ -4227,6 +4227,7 @@ name = "web-hello"
 version = "0.0.1"
 dependencies = [
  "rune",
+ "rune-kit",
  "wasm-bindgen",
 ]
 

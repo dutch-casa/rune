@@ -165,6 +165,31 @@ fn a_header_click_sorts_and_shows_the_direction() {
 }
 
 #[test]
+fn space_on_a_focused_sortable_header_sorts_and_leaves_row_keys_on_the_grid() {
+    let mut rt = runtime(App::new(4, false));
+    let focused_header = |rt: &Runtime<App>, id: &str| {
+        rt.elements().iter().any(|e| e.focused && e.role == "columnheader" && e.key.as_deref() == Some(id))
+    };
+    assert!(header(&rt, "size").focusable);
+    assert!(!header(&rt, "kind").focusable, "a header that does not sort is not a stop");
+    let mut saw = false;
+    for _ in 0..8 {
+        press(&mut rt, Key::Tab);
+        if focused_header(&rt, "size") {
+            saw = true;
+            break;
+        }
+    }
+    assert!(saw, "Tab reaches the sortable header");
+    press(&mut rt, Key::Text(" ".into()));
+    assert_eq!(rt.state.sorts.last().map(|(id, dir)| (id.as_str(), *dir)), Some(("size", SortDir::Ascending)));
+    let cursor = rt.state.table.cursor().map(str::to_owned);
+    press(&mut rt, Key::Down);
+    assert_eq!(rt.state.table.cursor().map(str::to_owned), cursor, "arrows on the header do not move the grid");
+    assert!(rt.state.opened.is_empty());
+}
+
+#[test]
 fn cancelling_a_column_resize_restores_the_original_width_policy() {
     for initial in [None, Some(110.0)] {
         let mut rt = runtime(App::new(20, false));
@@ -219,6 +244,10 @@ fn shift_extends_and_cmd_a_selects_all_in_a_multi_select_table() {
     let mut sel: Vec<&str> = rt.state.table.selected().collect();
     sel.sort();
     assert_eq!(sel, ["f0", "f1", "f2"]);
+    let cursor = find(&rt, |e| e.role == "row" && e.item_cursor);
+    assert_eq!(cursor.len(), 1);
+    assert_eq!(cursor[0].key.as_deref(), Some("f2"));
+    assert!(find(&rt, |e| e.role == "row" && e.item_selected).iter().any(|e| e.key.as_deref() == Some("f0") && !e.item_cursor));
     press_with(&mut rt, Key::Command('a'), Mods { cmd: true, ..Mods::default() });
     assert_eq!(rt.state.table.selected_len(), 30);
 }

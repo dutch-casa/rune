@@ -1,15 +1,13 @@
 //! Pressable spans in text (`El::link`). Each link's line boxes come from the shaped layout,
 //! so only its glyphs take the pointer. The text element holds focus for its links and
-//! `LinkState::focus` says which one; links are reported to tools as their own elements.
+//! `Runtime::focused_link` says which one; links are reported to tools as their own elements.
 use super::*;
-use crate::text::LinkPaint;
+use crate::text::{Link, LinkPaint};
 
 #[derive(Default)]
 pub(super) struct LinkState {
     /// The link a pointer press began on: (text path, link index).
     press: Option<(String, usize)>,
-    /// The focused text element's focused link.
-    focus: Option<usize>,
     /// The link a secondary press began on, in the captured text.
     secondary: Option<usize>,
 }
@@ -26,6 +24,28 @@ pub(super) fn origin(n: &Node, spec: &TextSpec, layout: &Layout<Ink>, rect: [f32
 fn drawn(n: &Node, a: u32, b: u32) -> (u32, u32) {
     let (a, b) = n.elided.map_or((a as usize, b as usize), |e| e.mark(a as usize, b as usize, true));
     (a as u32, b as u32)
+}
+
+/// Reading order uses source offsets; the declaration index remains the link's identity.
+pub(crate) fn link_source_order(link: &crate::Link, index: usize) -> (u32, usize) { (link.start, index) }
+
+/// A link must name authored text and retain drawn bytes before it can have geometry.
+fn link_range(n: &Node, spec: &TextSpec, link: &Link) -> Option<(u32, u32)> {
+    if link.start >= link.end
+        || spec.content.get(link.start as usize..link.end as usize).is_none()
+        || spec.source_slice(link.start, link.end).is_none_or(str::is_empty)
+    {
+        return None;
+    }
+    let (a, b) = drawn(n, link.start, link.end);
+    (a < b && (b as usize) <= layout_len(n, spec)).then_some((a, b))
+}
+
+/// Tests whether the same range used by `boxes` produces a box, without collecting boxes.
+fn link_has_box(n: &Node, spec: &TextSpec, link: &Link) -> bool {
+    let Some(layout) = &n.text_layout else { return false };
+    let Some((a, b)) = link_range(n, spec, link) else { return false };
+    crate::text::range_has_boxes(layout, a as usize, b as usize)
 }
 
 /// The byte length of node `n`'s drawn text.
@@ -143,7 +163,7 @@ impl<S: 'static> Runtime<S> {
         let px = s / z.max(1e-4);
         let mut out = Vec::new();
         for (k, l) in spec.links.iter().enumerate() {
-            let (a, b) = drawn(n, l.start, l.end);
+            let Some((a, b)) = link_range(n, spec, l) else { continue };
             for (bb, _) in boxes(layout, layout_len(n, spec), a, b) {
                 out.push((k, [ox + bb.x0 as f32 / px, oy + bb.y0 as f32 / px, ox + bb.x1 as f32 / px, oy + bb.y1 as f32 / px]));
             }
@@ -178,7 +198,7 @@ impl<S: 'static> Runtime<S> {
             .and_then(|(x, y)| self.link_at(i, x, y));
         let held = self.capture.as_ref().is_some_and(|(p, _)| p == path) && self.capture_inside;
         let pressed = self.links.press.as_ref().filter(|(p, k)| held && p == path && hovered == Some(*k)).map(|(_, k)| *k);
-        let focused = self.links.focus.filter(|_| self.keyboard_focus && self.focused.as_deref() == Some(path));
+        let focused = self.focused_link.filter(|_| self.keyboard_focus && self.focused.as_deref() == Some(path));
         (hovered, pressed, focused)
     }
 
@@ -266,46 +286,85 @@ impl<S: 'static> Runtime<S> {
         })
     }
 
-    fn link_count(&self, i: usize) -> usize {
-        self.nodes[i].text.as_ref().map_or(0, |t| t.links.len())
+    /// Finds the nearest eligible link in `(source start, declaration index)` order.
+    /// Each scan uses constant space and, in the worst case, inspects the layout for
+    /// every link. This avoids a retained ordering cache and allocations on Tab.
+    fn adjacent_link(&self, i: usize, from: Option<usize>, backward: bool) -> Option<usize> {
+        let n = &self.nodes[i];
+        let spec = n.text.as_ref()?;
+        let edge = match from {
+            Some(k) => Some(link_source_order(spec.links.get(k)?, k)),
+            None => None,
+        };
+        let mut best = None;
+        for (k, link) in spec.links.iter().enumerate() {
+            let key = link_source_order(link, k);
+            if edge.is_some_and(|edge| if backward { key >= edge } else { key <= edge })
+                || best.is_some_and(|best| if backward { key <= best } else { key >= best })
+            {
+                continue;
+            }
+            if link_has_box(n, spec, link) { best = Some(key); }
+        }
+        best.map(|(_, k)| k)
     }
 
-    /// Tab inside the focused text's links: moves to its next (or previous) link and returns
-    /// true, or false at its last (first) link so Tab leaves it.
+    pub(super) fn has_focusable_link(&self, i: usize) -> bool {
+        let n = &self.nodes[i];
+        n.text.as_ref().is_some_and(|spec| spec.links.iter().any(|link| link_has_box(n, spec, link)))
+    }
+
+    pub(super) fn link_eligible(&self, i: usize, k: usize) -> bool {
+        let n = &self.nodes[i];
+        n.text.as_ref().is_some_and(|spec| spec.links.get(k).is_some_and(|link| link_has_box(n, spec, link)))
+    }
+
+    pub(super) fn link_focus_target(&self, i: usize) -> Option<usize> {
+        self.focused_link_index(i).or_else(|| self.adjacent_link(i, None, false))
+    }
+
+    /// Tab inside the focused text's links, or return false at its edge.
     pub(super) fn link_tab(&mut self, backward: bool) -> bool {
         let Some(i) = self.focused_index() else { return false };
-        let count = self.link_count(i);
-        let Some(k) = self.links.focus.filter(|_| count > 0) else { return false };
-        let next = if backward { k.checked_sub(1) } else { Some(k + 1).filter(|&j| j < count) };
-        if next.is_some() { self.links.focus = next; }
+        let Some(k) = self.focused_link_index(i) else { return false };
+        let next = self.adjacent_link(i, Some(k), backward);
+        if next.is_some() { self.focused_link = next; }
         next.is_some()
     }
 
     /// Tab focused node `i`: start at its first link, or its last going backward.
     pub(super) fn enter_links(&mut self, i: usize, backward: bool) {
-        let count = self.link_count(i);
-        self.links.focus = (count > 0).then(|| if backward { count - 1 } else { 0 });
-    }
-
-    pub(super) fn blur_links(&mut self) {
-        self.links.focus = None;
+        self.focused_link = self.adjacent_link(i, None, backward);
     }
 
     /// Whether focused node `i` has a link focused, which takes Return.
     pub(super) fn link_focused(&self, i: usize) -> bool {
-        self.links.focus.is_some_and(|k| k < self.link_count(i))
+        self.focused_link.is_some_and(|k| self.link_eligible(i, k))
     }
 
     /// The id of focused node `i`'s focused link, which tools list as its own element.
     pub(super) fn focused_link_id(&self, i: usize) -> Option<String> {
-        let k = self.links.focus?;
+        let k = self.focused_link_index(i)?;
         self.nodes[i].text.as_ref()?.links.get(k).map(|l| l.id.clone())
+    }
+
+    pub(super) fn focused_link_index(&self, i: usize) -> Option<usize> {
+        self.focused_link.filter(|&k| self.focused.as_deref() == Some(&self.nodes[i].path) && self.link_eligible(i, k))
+    }
+
+    pub(super) fn focus_link(&mut self, i: usize, k: usize) -> bool {
+        if !self.can_focus(i) || !self.link_eligible(i, k) { return false; }
+        let changed = self.set_focus(Some(self.nodes[i].path.clone()), true) || self.focused_link != Some(k);
+        self.focused_link = Some(k);
+        self.dirty |= changed;
+        self.pending.scroll_to.push(crate::runtime::ScrollReveal::into_view(None, self.nodes[i].path.clone()));
+        true
     }
 
     /// The Menu key on focused node `i`'s focused link: its `on_link_secondary`, at the
     /// bottom-left of its first line box.
     pub(super) fn focused_link_menu(&mut self, i: usize, tx: &mut Tx) -> bool {
-        let Some(k) = self.links.focus.filter(|&k| k < self.link_count(i)) else { return false };
+        let Some(k) = self.focused_link_index(i) else { return false };
         if self.nodes[i].text.as_ref().is_none_or(|t| t.on_link_secondary.is_none()) { return false; }
         let Some((_, r)) = self.link_boxes(i, self.drawn_box(i)).into_iter().find(|(j, _)| *j == k) else { return false };
         let path = self.nodes[i].path.clone();
@@ -315,7 +374,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Enter or Space on a focused link presses it.
     pub(super) fn link_key(&mut self, i: usize, tx: &mut Tx) -> bool {
-        let Some(k) = self.links.focus.filter(|&k| k < self.link_count(i)) else { return false };
+        let Some(k) = self.focused_link_index(i) else { return false };
         let path = self.nodes[i].path.clone();
         self.press_link(&path, k, tx);
         true
@@ -332,7 +391,7 @@ impl<S: 'static> Runtime<S> {
             elements[at].focused = false;
             elements[at].focus_visible = false;
             let (hovered, pressed, _) = self.link_states(i);
-            let focused = self.links.focus.filter(|_| self.focused.as_deref() == Some(&n.path));
+            let focused = self.focused_link_index(i);
             let boxes = self.link_boxes(i, self.drawn_box(i));
             let targets = self.link_boxes(i, n.target);
             let union = |k: usize, bs: &[(usize, [f32; 4])]| bs.iter().filter(|(j, _)| *j == k).fold(None, |u: Option<[f32; 4]>, (_, r)| {
@@ -366,6 +425,13 @@ impl<S: 'static> Runtime<S> {
                     level: None,
                     expanded: None,
                     item_selected: false,
+                    item_cursor: false,
+                    controls: None,
+                    orientation: None,
+                    checked: None,
+                    mixed: false,
+                    invalid: false,
+                    range: None,
                     ..text.clone()
                 });
             }
@@ -492,9 +558,83 @@ impl<S: 'static> Runtime<S> {
                     level: None,
                     expanded: None,
                     item_selected: false,
+                    item_cursor: false,
+                    controls: None,
+                    orientation: None,
+                    checked: None,
+                    mixed: false,
+                    invalid: false,
+                    range: None,
                     ..text.clone()
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Key, KeyEvent, Link, Mods, col, text};
+
+    #[test]
+    fn link_navigation_uses_source_order_and_modal_restores_the_same_link() {
+        #[derive(Default)]
+        struct State { open: bool, activated: Vec<String>, field: crate::TextEdit }
+        fn view(s: &State, _: &mut Cx<State>) -> El {
+            let outside = text("First Second").key("outside")
+                .link(Link::new(6..12, "second")).link(Link::new(0..5, "first"))
+                .on_link(|s: &mut State, id, _| { s.activated.push(id.to_owned()); s.open = true; s.field.focused = true; });
+            let mut root = col().size(300.0, 200.0).child(outside);
+            if s.open {
+                root = root.child(col().key("modal").absolute(20.0, 40.0).size(200.0, 100.0)
+                    .modal(true, |s: &mut State| s.open = false)
+                    .child(text("Inside").key("inside").link(Link::new(0..6, "inside-link")))
+                    .child(crate::text_input(&s.field, crate::tok::type_::BODY).key("field").size(180.0, 30.0)
+                        .on_edit(|s: &mut State| &mut s.field)));
+            }
+            root
+        }
+        let mut rt = Runtime::new(State::default(), view, (300.0, 200.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        let key = |rt: &mut Runtime<State>, key| {
+            rt.key(KeyEvent { key, mods: Mods::default() }); rt.frame(0.0);
+        };
+        let focused = |rt: &Runtime<State>| rt.elements().into_iter().find(|e| e.focused).and_then(|e| e.key);
+        key(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt).as_deref(), Some("first"));
+        key(&mut rt, Key::Tab);
+        assert_eq!(focused(&rt).as_deref(), Some("second"));
+        key(&mut rt, Key::Enter);
+        assert_eq!(rt.state.activated, ["second"]);
+        assert_eq!(focused(&rt).as_deref(), Some("field"));
+        key(&mut rt, Key::Escape);
+        assert_eq!(focused(&rt).as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn synthetic_text_parts_do_not_inherit_owner_relationships() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            col().size(200.0, 100.0)
+                .child(text("Linked marked").key("owner").size(160.0, 30.0)
+                    .focus_cursor(true).controls("target").orientation(crate::Axis::Vertical)
+                    .link(Link::new(0..6, "link"))
+                    .text_highlight(crate::TextHighlight::new(7..13, crate::Color::WHITE).key("mark")))
+                .child(crate::el().key("target").size(40.0, 30.0))
+        }
+        let mut rt = Runtime::new((), view, (200.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let elements = rt.elements();
+        let owner = elements.iter().find(|e| e.key.as_deref() == Some("owner")).unwrap();
+        assert!(owner.item_cursor);
+        assert!(owner.controls.is_some());
+        assert_eq!(owner.orientation, Some(crate::Axis::Vertical));
+        for part in elements.iter().filter(|e| matches!(e.key.as_deref(), Some("link" | "mark"))) {
+            assert!(!part.item_cursor);
+            assert!(part.controls.is_none());
+            assert!(part.orientation.is_none());
+        }
+        assert_eq!(elements.iter().filter(|e| matches!(e.key.as_deref(), Some("link" | "mark"))).count(), 2);
     }
 }

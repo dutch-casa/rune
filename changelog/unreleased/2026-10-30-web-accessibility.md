@@ -1,0 +1,1 @@
+- Disabled subtrees no longer take pointer or keyboard input on any target. Read-only editors remain selectable, inline links follow source Tab order, and modal dismissal restores the exact prior link. On web, retained browser controls expose Kit names, state, numeric values, help and keyboard cursors. Editor identity and page zoom remain intact.

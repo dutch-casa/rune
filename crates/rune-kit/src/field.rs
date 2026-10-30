@@ -48,9 +48,9 @@ impl Field {
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
         let mut root = col().role("group").gap(8.0).w_full().items_start();
-        if let Some(l) = self.label {
+        if let Some(l) = &self.label {
             let mut lab = row().key("label").w_full().min_h(16.0).gap(4.0).center_y().child(
-                text(l).key("text").font(rune::TextStyle { line_height: 16.0, ..k.ty.ui_medium }).color(c.text_base),
+                text(l.clone()).key("text").role("label").font(rune::TextStyle { line_height: 16.0, ..k.ty.ui_medium }).color(c.text_base),
             );
             if self.info {
                 lab = lab.child(icon(&INFO, 16.0).key("info").color(c.icon_muted));
@@ -63,7 +63,10 @@ impl Field {
             root = root.child(aside("prefix", p));
         }
         if let Some(control) = self.control {
-            root = root.child(control);
+            root = root.child(match self.label.as_deref() {
+                Some(label) => control.label_if_missing(label),
+                None => control,
+            });
         }
         if let Some(s) = self.suffix {
             root = root.child(aside("suffix", s));

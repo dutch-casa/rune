@@ -28,7 +28,7 @@ Slint.
 | Layout | Taffy (flex, grid, block) on Rune's own node arena, plus a sum-tree height index for huge lists | Own layout engine, SwiftUI-style proposals |
 | State | Keyed retained tree rebuilt from plain view functions; typed models; reads subscribe; handlers queued with `&mut` | Signals, GPUI entities, immediate mode |
 | Animation | Render thread owns the presented tree; every property is an analytic spring track (duration + bounce, SwiftUI's formula) that retargets with velocity | Animating through view re-renders on the main thread |
-| Accessibility | AccessKit, and the same tree is the agent inspector's tree | Own a11y bridges |
+| Accessibility | Retained scene semantics; browser DOM mirror implemented, native AccessKit adapters planned | Separate application-owned semantic trees |
 | Shells | winit to start (the prototype runs on it); own thin shells per platform (borrowing from Zed's Apache-2.0 `gpui_macos`/`gpui_windows`/`gpui_linux`/`gpui_ios`/`gpui_web`) as soon as text input lands, because winit's IME is incomplete | winit forever, SDL3 |
 | Hot reload | Tokens and live literals with no rebuild (≤ 100 ms), subsecond hot-patching for structural Rust edits on Mac (~1 s measured, goal 300 ms), **split-process dev mode** for the iPhone (renderer on the phone, app code on the Mac) | A view DSL interpreter, code loading on the device |
 | Platform order | macOS + Windows + Linux together (one wgpu backend) → web (docs site, demos) → iOS → Android | |
@@ -610,8 +610,10 @@ verification harness already in place.
 
 ## 13. Web target status
 
-The first experimental M5 target is implemented: winit 0.30 owns a single canvas, rAF and
-ResizeObserver; GPU initialization is asynchronous, and a sliding textarea supplies text
-services. It runs on the main thread without SharedArrayBuffer. See [WEB.md](WEB.md) and
-`examples/web-hello`. Real-device Safari keyboard verification, accessibility mirroring,
-WebGL fallback and EditContext remain follow-up work.
+The experimental M5 target uses winit 0.30 for its canvas, rAF and ResizeObserver.
+GPU initialization is asynchronous. Retained native editors supply browser text services,
+and a semantic DOM mirror exposes text, controls, names, state, numeric values, help and keyboard
+cursors from the retained scene. It runs on the main thread without SharedArrayBuffer. See [WEB.md](WEB.md)
+and `examples/web-hello` for behavior and verification. Real-device Safari keyboard verification,
+native accessibility adapters, WebGL fallback and EditContext remain follow-up work. Complete
+applications still need browser, screen-reader and WCAG verification.

@@ -100,6 +100,7 @@ impl EditActs {
         self.visual.push(Box::new(f));
     }
     fn apply(self, mut e: El, disabled: bool) -> El {
+        e = e.disabled(disabled);
         for f in self.visual {
             e = f(e);
         }
@@ -275,7 +276,7 @@ impl TextInput {
         let style = self.style.unwrap_or(k.ty.ui_compact);
         let base: f32 = if self.large { 32.0 } else { 28.0 };
         let height = self.height.map_or_else(|| base.max(style.line_px() + 12.0), |h| h.max(style.line_px()));
-        let field = text_input(&self.edit, style)
+        let mut field = text_input(&self.edit, style)
             .single_line()
             .key("input")
             .grow(1.0)
@@ -284,6 +285,9 @@ impl TextInput {
             .rich_style(kit_rich_style(k))
             .placeholder(self.placeholder.clone(), hint)
             .caret(ink, k.selection());
+        if self.invalid && !disabled {
+            field = field.invalid(true);
+        }
         let field = self.edits.apply(field, disabled);
         let mut value = row().key("value").grow(1.0).shrink().gap(6.0).center_y();
         if let Some(i) = self.leading {
@@ -294,7 +298,7 @@ impl TextInput {
         value = value.child(field);
         let mut e = row()
             .role("textbox")
-            .label(self.placeholder.clone())
+            .fallback_label(self.placeholder.clone())
             .h(height)
             .pr(8.0)
             .gap(8.0)
@@ -322,8 +326,9 @@ impl TextInput {
                 b = b.mr(-8.0);
             }
             if !disabled {
-                b = self.copy_acts.apply(b.hit().hover(c.hover).press(crate::press_over(c.hover, c.pressed)), true);
+                b = b.hit().hover(c.hover).press(crate::press_over(c.hover, c.pressed));
             }
+            b = self.copy_acts.apply(b, !disabled);
             e = e.child(b);
         }
         if self.plain {
@@ -449,16 +454,19 @@ impl TextArea {
         let red = self.invalid && !disabled && k.invalid_text;
         let ink = if red { c.danger.fg } else { c.text_base };
         let hint = if red { c.danger.fg } else { c.text_faint };
-        let field = text_input(&self.edit, style)
+        let mut field = text_input(&self.edit, style)
             .key("input")
             .w_full()
             .color(ink)
             .rich_style(kit_rich_style(k))
             .placeholder(self.placeholder.clone(), hint)
             .caret(ink, k.selection());
+        if self.invalid && !disabled {
+            field = field.invalid(true);
+        }
         let field = self.edits.apply(field, disabled);
         let line = style.line_px();
-        let mut e = col().role("textbox").label(self.placeholder.clone()).padding(8.0);
+        let mut e = col().role("textbox").fallback_label(self.placeholder.clone()).padding(8.0);
         e = if let Some((min_rows, max_rows)) = self.grow {
             let viewport = rune::auto_grow(field, min_rows, max_rows);
             e.child(match self.max_height {
@@ -571,14 +579,21 @@ impl TextField {
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
         let body = TextStyle::new(14.0, 400.0).lh(21.0);
-        let field = text_input(&self.edit, body)
+        let mut field = text_input(&self.edit, body)
             .key("input")
+            .label(self.label.clone())
             .grow(1.0)
             .shrink()
             .color(c.text_strong)
             .rich_style(kit_rich_style(k))
             .placeholder(self.placeholder.clone(), c.text_weak)
             .caret(c.text_strong, k.selection());
+        if self.error.is_some() && self.state != State::Disabled {
+            field = field.invalid(true);
+            if let Some(e) = &self.error {
+                field = field.help(e.clone());
+            }
+        }
         let field = if self.multiline { field } else { field.single_line() };
         let field = self.edits.apply(field, self.state == State::Disabled);
         let mut wrapper = row()
@@ -608,8 +623,9 @@ impl TextField {
                 .hover(c.hover)
                 .child(icon(k.glyph.copy, 16.0).color(c.std_icon));
             if self.state != State::Disabled {
-                b = self.copy_acts.apply(b.hit().hover(c.hover).press(crate::press_over(c.hover, c.pressed)), true);
+                b = b.hit().hover(c.hover).press(crate::press_over(c.hover, c.pressed));
             }
+            b = self.copy_acts.apply(b, self.state != State::Disabled);
             wrapper = wrapper.pr(4.0).child(b);
         }
         let mut root = col().role("textbox").label(self.label.clone()).gap(8.0).w_full();

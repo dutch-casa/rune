@@ -4,13 +4,16 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { inputSmoke } from './web-input-smoke.mjs';
+import { accessibilityProof } from './web-accessibility.mjs';
+import { lifecycleProof } from './web-lifecycle.mjs';
 const { chromium, webkit } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const engine = process.env.WEB_ENGINE || 'chromium';
 const root = resolve(process.argv[2] || 'target/web');
 const output = resolve(process.argv[3] || 'target/web-proof');
 await mkdir(output, { recursive: true });
 const server = createServer(async (request, response) => {
-    const path = resolve(root, '.' + new URL(request.url, 'http://localhost').pathname.replace(/\/$/, '/index.html'));
+    const pathname = new URL(request.url, 'http://localhost').pathname;
+    const path = resolve(root, '.' + (pathname.endsWith('/') ? `${pathname}index.html` : pathname));
     if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
     try {
         const bytes = await readFile(path);
@@ -28,8 +31,27 @@ try {
         hasTouch: true, isMobile: true,
         permissions: engine === 'chromium' ? ['clipboard-read', 'clipboard-write'] : [], colorScheme: 'dark' });
     const page = await context.newPage();
+    const canvas = page.locator('canvas');
     page.on('pageerror', error => { errors.push(error.message); console.log(error.message); });
     page.on('console', message => { if (message.type() === 'error') { errors.push(message.text()); console.log(message.text()); } });
+    const ax = engine === 'chromium' ? await context.newCDPSession(page) : null;
+    const axNode = async locator => {
+        await locator.evaluate(element => element.setAttribute('data-proof-ax', ''));
+        try {
+            const { root } = await ax.send('DOM.getDocument');
+            const { nodeId } = await ax.send('DOM.querySelector', { nodeId: root.nodeId, selector: '[data-proof-ax]' });
+            const { node } = await ax.send('DOM.describeNode', { nodeId });
+            const { nodes } = await ax.send('Accessibility.getPartialAXTree', { nodeId, fetchRelatives: false });
+            return nodes.find(item => item.backendDOMNodeId === node.backendNodeId);
+        } finally {
+            await locator.evaluate(element => element.removeAttribute('data-proof-ax'));
+        }
+    };
+    const tapControl = async locator => {
+        const box = await locator.boundingBox();
+        assert.ok(box, 'the rendered control needs bounds');
+        await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    };
     await page.addInitScript(() => {
         // Chromium's device emulation leaves devicePixelContentBoxSize at the host DPR.
         // Exercise winit's Safari fallback (CSS content box × emulated DPR) instead.
@@ -54,8 +76,24 @@ try {
     } else {
     if (!process.env.WEB_INPUT_ONLY) {
     await page.waitForFunction(() => window.__proof?.submits > 0, { timeout: 30000 });
+    const mirror = page.locator('[data-rune-a11y]');
+    await mirror.waitFor();
+    assert.equal(await canvas.getAttribute('aria-hidden'), 'true');
+    assert.notEqual(await mirror.evaluate(element => getComputedStyle(element).opacity), '0');
+    const send = page.getByRole('button', { name: 'Send', exact: true });
+    await send.waitFor();
+    assert.equal(await send.count(), 1);
+    assert.equal(await send.getAttribute('tabindex'), '0');
+    assert.equal(await page.getByRole('button', { name: 'Copy last', exact: true }).getAttribute('tabindex'), '0');
+    assert.equal(await page.getByRole('heading', { name: 'Messages', level: 1 }).count(), 1);
+    if (ax) {
+        assert.equal((await axNode(mirror)).role.value, 'document');
+        assert.equal((await axNode(send)).name.value, 'Send');
+        assert.equal((await axNode(canvas)).ignored, true);
+    }
     await page.waitForTimeout(1000); // Let the initial appearance finish before measuring idle.
-    assert.deepEqual(await page.locator('canvas').evaluate(c => [c.width, c.height]), [1170, 2280]);
+    assert.equal(await canvas.evaluate(c => c.width === Math.round(c.getBoundingClientRect().width * devicePixelRatio)
+        && c.height === Math.round(c.getBoundingClientRect().height * devicePixelRatio)), true);
     const beforeIdle = await page.evaluate(() => window.__proof.submits);
     const beforeIdleRaf = await page.evaluate(() => window.__proof.rafs);
     await page.waitForTimeout(600);
@@ -85,7 +123,7 @@ try {
     assert.equal(await page.locator('textarea').inputValue(), 'Bonjour 🦀');
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('textarea').inputValue(), '');
-    await page.touchscreen.tap(330, 36);
+    await tapControl(page.getByRole('button', { name: 'Copy last', exact: true }));
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Bonjour 🦀', 'send updates the actual model');
     await page.touchscreen.tap(100, 720);
     await page.keyboard.insertText('x'.repeat(1200) + ' tail');
@@ -96,7 +134,7 @@ try {
         field.dispatchEvent(new InputEvent('input', { inputType: 'insertReplacementText', data: 'corrected' }));
     });
     await page.keyboard.press('Enter');
-    await page.touchscreen.tap(330, 36);
+    await tapControl(page.getByRole('button', { name: 'Copy last', exact: true }));
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'x'.repeat(1200) + ' corrected');
     await page.touchscreen.tap(100, 720);
     const beforeMissingGlyph = await page.evaluate(() => window.__proof.submits);
@@ -119,7 +157,7 @@ try {
     });
     assert.equal(await page.locator('textarea').inputValue(), 'replacement pasted');
     const popup = context.waitForEvent('page');
-    await page.touchscreen.tap(90, 36);
+    await tapControl(page.getByRole('link', { name: 'Rust website', exact: true }));
     const linked = await popup;
     await linked.waitForLoadState('domcontentloaded');
     assert.ok(linked.url().includes('rust-lang.org'));
@@ -127,7 +165,11 @@ try {
     await linked.close();
     await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 430, height: 540 });
-    await page.waitForFunction(() => document.querySelector('canvas')?.height === 1620);
+    await page.waitForFunction(() => {
+        const canvas = document.querySelector('canvas');
+        return canvas?.width === Math.round(canvas.getBoundingClientRect().width * devicePixelRatio)
+            && canvas.height === Math.round(canvas.getBoundingClientRect().height * devicePixelRatio);
+    });
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${output}/web-light-keyboard-size.png` });
     const gpuErrors = await page.evaluate(() => window.__proof.gpuErrors);
@@ -139,6 +181,180 @@ try {
     }
     await page.setViewportSize({ width: 390, height: 760 });
     await inputSmoke(page, url);
+    const mirror = page.locator('[data-rune-a11y]');
+    await page.getByRole('combobox', { name: 'Fruit', exact: true }).waitFor();
+    const select = page.getByRole('combobox', { name: 'Fruit', exact: true });
+    const editor = page.getByRole('textbox', { name: 'Captioned editor', exact: true });
+    const visibleCheck = page.getByRole('checkbox', { name: 'Visible checkbox', exact: true });
+    const hiddenCheck = page.getByRole('checkbox', { name: 'Hidden checkbox', exact: true });
+    const button = page.getByRole('button', { name: 'Button', exact: true });
+    assert.equal(await canvas.getAttribute('aria-hidden'), 'true');
+    assert.notEqual(await mirror.evaluate(element => getComputedStyle(element).opacity), '0');
+    assert.equal(await visibleCheck.getAttribute('aria-label'), null);
+    assert.equal(await visibleCheck.textContent(), 'Visible checkbox');
+    assert.equal(await hiddenCheck.getAttribute('aria-label'), 'Hidden checkbox');
+    assert.equal(await page.getByRole('group', { name: 'Captioned editor', exact: true }).count(), 0);
+    assert.equal(await mirror.getByRole('group', { name: '', exact: true }).count(), 0);
+    const captionFor = async (control, name) => {
+        const relation = await control.evaluate((element, name) => {
+            const id = element.getAttribute('aria-labelledby');
+            const caption = id && document.getElementById(id);
+            const root = element.closest('[data-rune-a11y]');
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let copies = 0;
+            while (walker.nextNode()) if (walker.currentNode.textContent.trim() === name) copies++;
+            return { id, text: caption?.textContent.trim(), copies, override: element.getAttribute('aria-label') };
+        }, name);
+        assert.ok(relation.id, `${name} must reference its caption`);
+        assert.equal(relation.text, name);
+        assert.equal(relation.copies, 1, `${name} must occur once in the semantic DOM`);
+        assert.equal(relation.override, null);
+        return relation.id;
+    };
+    await captionFor(select, 'Fruit');
+    await select.focus();
+    await page.keyboard.press('Enter');
+    const selectedOption = page.getByRole('option', { name: 'Banana', exact: true });
+    await selectedOption.waitFor();
+    if (ax) assert.equal((await axNode(selectedOption)).name.value, 'Banana');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await select.waitFor();
+    assert.equal(await select.textContent(), 'Cherry');
+    const captionId = await captionFor(editor, 'Captioned editor');
+    const editorId = await editor.getAttribute('id');
+    await editor.evaluate(element => { window.__captionEditor = element; });
+    const namedEditor = page.getByRole('textbox', { name: 'Nickname', exact: true });
+    assert.equal(await namedEditor.getAttribute('aria-labelledby'), null);
+    await captionFor(page.getByRole('group', { name: 'Travel dates', exact: true }), 'Travel dates');
+    assert.equal(await page.getByRole('textbox', { name: 'Start date', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('textbox', { name: 'End date', exact: true }).count(), 1);
+    const helpId = await button.getAttribute('aria-describedby');
+    assert.ok(helpId);
+    assert.equal(await page.locator(`[id="${helpId}"]`).textContent(), 'Button help');
+    if (ax) {
+        assert.equal((await axNode(mirror)).role.value, 'document');
+        assert.equal((await axNode(canvas)).ignored, true);
+    }
+    if (ax) {
+        const selectAx = await axNode(select);
+        assert.equal(selectAx.name.value, 'Fruit');
+        assert.equal(selectAx.value.value, 'Cherry');
+        assert.equal((await axNode(editor)).name.value, 'Captioned editor');
+        assert.equal((await axNode(visibleCheck)).name.value, 'Visible checkbox');
+        assert.equal((await axNode(hiddenCheck)).name.value, 'Hidden checkbox');
+        assert.equal((await axNode(button)).description.value, 'Button help');
+        await visibleCheck.focus();
+        await page.keyboard.press('Space');
+        await page.waitForFunction(() => document.querySelector('[role="checkbox"]')?.getAttribute('aria-checked') === 'true');
+        assert.equal((await axNode(visibleCheck)).properties.find(property => property.name === 'checked').value.value, 'true');
+    }
+    await button.evaluate(element => element.click());
+    await page.waitForFunction(id => !document.getElementById(id), helpId);
+    assert.equal(await button.getAttribute('aria-describedby'), null);
+    if (ax) assert.equal((await axNode(button)).description?.value, undefined);
+    assert.equal(await page.locator(`[id="${helpId}"]`).count(), 0);
+    const retainedEditor = page.locator(`[id="${editorId}"]`);
+    assert.equal(await page.locator(`[id="${captionId}"]`).count(), 0);
+    assert.equal(await retainedEditor.getAttribute('aria-labelledby'), null);
+    assert.equal(await retainedEditor.evaluate(element => element === window.__captionEditor), true);
+    await button.evaluate(element => element.click());
+    await editor.waitFor();
+    await captionFor(editor, 'Captioned editor');
+    assert.equal(await editor.evaluate(element => element === window.__captionEditor), true);
+
+    await page.goto(new URL('?input-proof&disputed-review', url).href);
+    await page.getByRole('button', { name: 'Before links', exact: true }).waitFor();
+    const expectFocus = async (role, name) => {
+        await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await page.getByRole(role, { name, exact: true }).evaluate(element => element === document.activeElement),
+            true, `native Tab should reach ${name}`);
+    };
+    await page.getByRole('button', { name: 'Before links', exact: true }).focus();
+    for (const [key, role, name] of [
+        ['Tab', 'link', 'Alpha'], ['Tab', 'link', 'Beta'], ['Tab', 'button', 'After links'],
+        ['Shift+Tab', 'link', 'Beta'], ['Shift+Tab', 'link', 'Alpha'], ['Shift+Tab', 'button', 'Before links'],
+    ]) {
+        await page.keyboard.press(key);
+        await expectFocus(role, name);
+    }
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__disputedActions?.first === 1);
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__disputedActions?.second === 1);
+    assert.equal(await page.evaluate(() => window.__disputedActions.first), 1);
+    const launch = page.getByRole('button', { name: 'Launch', exact: true });
+    await launch.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__disputedActions?.launch === 1);
+    if (ax) {
+        assert.equal((await axNode(launch)).name.value, 'Launch');
+        for (const [role, name] of [['option', 'Option label Option support'], ['tab', 'Tab label Tab support'],
+            ['option', 'Distinct option name'], ['tab', 'Distinct tab name']]) {
+            assert.equal((await axNode(page.getByRole(role, { name, exact: true }))).name.value, name);
+        }
+    }
+    if (engine === 'chromium') {
+        const mobile = await browser.newContext({ viewport: { width: 390, height: 1000 }, hasTouch: true, isMobile: true });
+        try {
+            const touch = await mobile.newPage();
+            await touch.goto(new URL('?input-proof&disputed-review', url).href);
+            await touch.getByRole('button', { name: 'Before links', exact: true }).waitFor();
+            const session = await mobile.newCDPSession(touch);
+            const before = await touch.evaluate(() => visualViewport.scale);
+            await session.send('Input.synthesizePinchGesture', { x: 195, y: 380, scaleFactor: 1.8,
+                relativeSpeed: 400, gestureSourceType: 'touch' });
+            await touch.waitForFunction(before => visualViewport.scale > before + 0.05, before);
+            assert.ok(await touch.evaluate(() => visualViewport.scale) > before + 0.05, 'native touch pinch must zoom');
+        } finally { await mobile.close(); }
+    }
+    await page.evaluate(async () => {
+        const source = performance.getEntriesByType('resource').map(entry => new URL(entry.name))
+            .find(url => url.pathname.endsWith('/src/web/bridge.js'));
+        const bridge = await import(source.href);
+        const input = await import(new URL('text_input.js', source).href);
+        const canvas = document.createElement('canvas');
+        document.body.append(canvas);
+        const events = [];
+        const handle = bridge.mount(canvas, event => events.push(JSON.parse(event)), true, false);
+        const edit = { text: 'abc', base: 0, anchor: 0, focus: 0, secure: false, readonly: false, single: true, placeholder: '' };
+        const packet = { items: [
+            { k: 'label', p: 'caption', r: [0, 0, 100, 20], t: 'Parked field' },
+            { k: 'textbox', p: 'field', r: [0, 20, 100, 30], t: '', name: 'Parked field', labelled_by: 'caption', tab: 0, edit },
+        ], bounds: [], focus: { path: 'field', link: null }, modal: false };
+        bridge.syncA11y(handle, JSON.stringify(packet));
+        input.sync(handle, 'field', 'abc', 0, 0, 0, false);
+        const field = handle.editors.get('field').element;
+        field.focus();
+        window.__parkedProbe = { bridge, handle, canvas, field, packet, events };
+    });
+    const parked = page.getByRole('textbox', { name: 'Parked field', exact: true });
+    assert.equal(await parked.count(), 1);
+    await page.evaluate(() => {
+        const { bridge, handle } = window.__parkedProbe;
+        bridge.syncA11y(handle, JSON.stringify({ items: [], bounds: [], focus: { path: 'field', link: null }, modal: false }));
+    });
+    assert.equal(await parked.evaluate(element => element === window.__parkedProbe.field && document.activeElement === element), true);
+    assert.equal(await parked.getAttribute('aria-labelledby'), null);
+    if (ax) assert.equal((await axNode(parked)).name.value, 'Parked field');
+    await page.evaluate(() => {
+        const { bridge, handle, packet } = window.__parkedProbe;
+        bridge.syncA11y(handle, JSON.stringify(packet));
+    });
+    await captionFor(parked, 'Parked field');
+    assert.equal(await parked.evaluate(element => element === window.__parkedProbe.field), true);
+    await page.evaluate(() => {
+        const { bridge, handle, canvas } = window.__parkedProbe;
+        bridge.destroy(handle);
+        canvas.remove();
+        delete window.__parkedProbe;
+    });
+    await accessibilityProof(page, url, ax ? axNode : null);
+    if (engine === 'chromium') await lifecycleProof(page);
+    console.log(JSON.stringify({ accessibility: 'passed', checks: ['caption references and lifecycle', 'explicit names',
+        'multi-editor groups', 'native link Tab order', 'option and tab content names', 'named pressable', 'native pinch zoom'] }));
     assert.deepEqual(await page.evaluate(() => window.__proof.gpuErrors), []);
     assert.deepEqual(errors.filter(e => !e.includes('404')), []);
     }
