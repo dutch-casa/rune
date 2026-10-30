@@ -218,6 +218,8 @@ descriptions through Chromium's accessibility tree. `?accessibility-proof` exerc
 invalid input recovery, progress and notification dismissal. Its `widget=combobox`, `table`
 and `tree` variants exercise keyboard cursors and native relationships. `widget=sidebar`
 checks independent header focus.
+The `widget=split` variant checks the pane width menu by touch, keyboard resizing and bounds,
+and the grip's native accessibility range and controlled pane.
 
 Its mobile DPR check exercises the Safari-style CSS-size fallback because Chromium device
 emulation does not scale `devicePixelContentBoxSize`. This is not a real iPhone keyboard,

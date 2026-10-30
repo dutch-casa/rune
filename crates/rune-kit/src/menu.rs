@@ -198,6 +198,8 @@ pub struct Menu {
     gutter: f32,
     min_width: f32,
     at: Option<(f32, f32)>,
+    /// [`Menu::beside`]: an element already in the tree, used when [`Menu::at`] is unset.
+    beside: Option<String>,
     dismiss: Option<(El, Modal)>,
 }
 
@@ -232,6 +234,7 @@ impl Menu {
             gutter: 6.0,
             min_width: 160.0,
             at: None,
+            beside: None,
             dismiss: None,
         }
     }
@@ -278,6 +281,12 @@ impl Menu {
         self.at = Some((x, y));
         self
     }
+    /// Open beside an element already in the tree, with this menu's placement. A pointer
+    /// point from [`Self::at`] wins. The element must be earlier in the tree than the surface.
+    pub(crate) fn beside(mut self, key: impl Into<String>) -> Self {
+        self.beside = Some(key.into());
+        self
+    }
 
     /// Presses outside and Escape close the menu. While open it holds keyboard focus.
     pub fn on_close<S: 'static>(mut self, f: impl Fn(&mut S) + 'static) -> Self {
@@ -322,17 +331,22 @@ impl Menu {
             return trigger;
         }
         let modal = mount_dismiss(self.dismiss.take(), layer);
-        let (placement, gutter, key) = match self.at {
-            Some((x, y)) => {
-                let point = format!("{}-point", self.key);
-                layer.push(el().key(point.clone()).absolute(x, y).size(0.0, 0.0));
-                (Placement::BottomStart, 0.0, point)
-            }
-            None => (self.placement, self.gutter, anchor_key.clone()),
+        let beside = self.beside.take();
+        let (placement, gutter, key, return_to) = if let Some((x, y)) = self.at {
+            let point = format!("{}-point", self.key);
+            layer.push(el().key(point.clone()).absolute(x, y).size(0.0, 0.0));
+            (Placement::BottomStart, 0.0, point, anchor_key.clone())
+        } else if let Some(key) = beside {
+            // Dismiss returns to the control the menu opened beside. A missing key (the pane
+            // closed with the menu) leaves restore unset; it does not invent a focus target.
+            let return_to = key.clone();
+            (self.placement, self.gutter, key, return_to)
+        } else {
+            (self.placement, self.gutter, anchor_key.clone(), anchor_key)
         };
         // Submenus anchor to items inside this surface, so they mount after it.
         let mut subs = Vec::new();
-        let mut surface = self.surface(k, &mut subs).focus_return(anchor_key);
+        let mut surface = self.surface(k, &mut subs).focus_return(return_to);
         if let Some(modal) = modal {
             surface = modal(surface);
         }

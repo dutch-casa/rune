@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use rune::{AppSpec, Cx, El, TextEdit, col, text};
 use rune_kit::{Accordion, AccordionItem, Button, Cell, Collapsible, Combobox, ComboboxOption, ComboboxState,
     Field, FileNode, FileTree, Kit, Progress, ProgressCircle, Table, TableColumn, TableState, TextInput, Toast, Tree, TreeModel, root};
-use rune_kit::shell::{Sidebar, SidebarHeader, SidebarRow};
+use rune_kit::shell::{PaneState, Sidebar, SidebarHeader, SidebarRow, SplitView};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(inline_js = "
@@ -25,6 +25,8 @@ struct State {
     actions: u32,
     table: TableState,
     files: TreeModel<FileNode<()>>,
+    sidebar: PaneState,
+    inspector: PaneState,
 }
 impl Default for State {
     fn default() -> Self {
@@ -33,7 +35,8 @@ impl Default for State {
         let widget = widget();
         let expanded = widget == "sidebar";
         Self { widget, expanded, toast: true, edit: TextEdit::new("bad"), combo: ComboboxState::default(),
-            choice: "alpha".into(), table: TableState::new().multi_select(true), rows: vec!["Alpha", "Beta", "Gamma"], actions: 0, files }
+            choice: "alpha".into(), table: TableState::new().multi_select(true), rows: vec!["Alpha", "Beta", "Gamma"], actions: 0, files,
+            sidebar: PaneState::new(240.0), inspector: PaneState::new(200.0) }
     }
 }
 
@@ -74,6 +77,10 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                     SidebarRow::new("Alpha").selected(true).on_select(|s: &mut State, _| s.choice = "alpha".into()).build(&kit)
                 }).build(&k).h(240.0)
         }
+        "split" => SplitView::new(text("Main content").color(k.c.text_base))
+            .sidebar(&s.sidebar, |s: &mut State| &mut s.sidebar, text("Sidebar content").color(k.c.text_base))
+            .inspector(&s.inspector, |s: &mut State| &mut s.inspector, text("Inspector content").color(k.c.text_base))
+            .build(&k).grow(1.0).min_h(0.0),
         _ => text("Unknown accessibility fixture"),
     };
     root(col().w_full().h_full().padding(16.0).gap(16.0).fill(k.c.bg_base)

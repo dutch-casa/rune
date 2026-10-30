@@ -6,6 +6,7 @@ import { resolve, extname, sep } from 'node:path';
 import { inputSmoke } from './web-input-smoke.mjs';
 import { accessibilityProof } from './web-accessibility.mjs';
 import { lifecycleProof } from './web-lifecycle.mjs';
+import { paneWidthProof } from './web-pane-width.mjs';
 const { chromium, webkit } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const engine = process.env.WEB_ENGINE || 'chromium';
 const root = resolve(process.argv[2] || 'target/web');
@@ -353,6 +354,7 @@ try {
     });
     await accessibilityProof(page, url, ax ? axNode : null);
     if (engine === 'chromium') await lifecycleProof(page);
+    await paneWidthProof(page, url, ax ? axNode : null);
     console.log(JSON.stringify({ accessibility: 'passed', checks: ['caption references and lifecycle', 'explicit names',
         'multi-editor groups', 'native link Tab order', 'option and tab content names', 'named pressable', 'native pinch zoom'] }));
     assert.deepEqual(await page.evaluate(() => window.__proof.gpuErrors), []);
