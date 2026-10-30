@@ -223,6 +223,39 @@ pub(crate) fn move_line(layout: &Layout<Ink>, byte: usize, down: bool) -> Option
     Some(cursor_from_point(layout, bb.x0 as f32, (m.block_min_coord + m.block_max_coord) * 0.5).index())
 }
 
+/// Whether `range_boxes(layout, a, b, false)` would emit a box, without allocating geometry.
+pub(crate) fn range_has_boxes(layout: &Layout<Ink>, a: usize, b: usize) -> bool {
+    use parley::{BreakReason, editing::Cursor, editing::Selection, layout::Affinity};
+    if a >= b { return false; }
+    if layout.inline_boxes().next().is_none() {
+        let selection = Selection::new(
+            Cursor::from_byte_index(layout, a, Affinity::Downstream),
+            Cursor::from_byte_index(layout, b, Affinity::Upstream),
+        );
+        let mut has_box = false;
+        selection.geometry_with(layout, |_, _| has_box = true);
+        return has_box;
+    }
+    // Inline boxes are excluded, leaving advancing clusters or a selected newline.
+    let range = a..b;
+    layout.lines().any(|line| {
+        let lr = line.text_range();
+        if lr.end <= a || lr.start >= b { return false; }
+        if line.runs().any(|run| run.visual_clusters().any(|cluster| {
+            range.contains(&cluster.text_range().start) && cluster.advance() > 0.0
+        })) {
+            return true;
+        }
+        line.break_reason() == BreakReason::Explicit
+            && lr.end > lr.start && range.contains(&(lr.end - 1))
+            && parley::Cluster::from_byte_index(layout, lr.end - 1).is_some_and(|cluster| {
+                let run = cluster.run();
+                let fm = run.font_metrics();
+                fm.ascent as f64 + fm.descent as f64 > 0.0
+            })
+    })
+}
+
 /// Line boxes (`(BoundingBox, line_idx)`) covering bytes `a..b` of `layout`. When `pill_boxes`
 /// is true, a selected pill's leading and trailing chip boxes are included in the highlight;
 /// when false (underlines, strikethroughs, link hit boxes), inline boxes are excluded so they

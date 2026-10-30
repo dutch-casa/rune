@@ -126,6 +126,39 @@ fn unit_at(e: &crate::edit::TextEdit, h: Hit, unit: Unit) -> (usize, usize) {
 }
 
 impl<S: 'static> Runtime<S> {
+    /// Resolve the sole eligible editor in every retained subtree in one bottom-up pass.
+    pub(super) fn input_owners(&self, eligible: impl Fn(usize) -> bool) -> Vec<Option<usize>> {
+        #[derive(Clone, Copy)]
+        enum Cardinality {
+            Empty,
+            One(usize),
+            Many,
+        }
+
+        let mut counts = vec![Cardinality::Empty; self.nodes.len()];
+        // Parent indices precede their children, including retained exit nodes.
+        for (i, node) in self.nodes.iter().enumerate().rev() {
+            if node.input.is_some() && eligible(i) {
+                counts[i] = match counts[i] {
+                    Cardinality::Empty => Cardinality::One(i),
+                    Cardinality::One(_) | Cardinality::Many => Cardinality::Many,
+                };
+            }
+            if let Some(parent) = node.parent {
+                counts[parent] = match (counts[parent], counts[i]) {
+                    (Cardinality::Empty, child) => child,
+                    (current, Cardinality::Empty) => current,
+                    _ => Cardinality::Many,
+                };
+            }
+        }
+        counts.into_iter().map(|count| match count {
+            Cardinality::One(i) => Some(i),
+            Cardinality::Empty | Cardinality::Many => None,
+        }).collect()
+    }
+
+
     pub(super) fn input_down(&mut self, ji: usize, x: f32, y: f32) {
         let now = self.now_clock();
         let shift = self.held_mods.shift;
