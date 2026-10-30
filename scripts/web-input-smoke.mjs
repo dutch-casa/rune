@@ -9,7 +9,12 @@ export async function inputSmoke(page, url) {
     // The fixture reports from poll, before that frame drains queued keys. Wait for the
     // host's next presented frame rather than guessing how long shader startup takes.
     const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    await page.touchscreen.tap(100, 36);
+    const tapPlain = async () => {
+        const box = await page.locator('textarea[data-rune-node$="/plain"]').boundingBox();
+        assert.ok(box, 'the plain editor needs presented bounds');
+        await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    };
+    await tapPlain();
     assert.equal(await page.evaluate(() => document.activeElement.tagName), 'TEXTAREA');
     await page.keyboard.insertText('hello ');
     await settle();
@@ -20,7 +25,7 @@ export async function inputSmoke(page, url) {
         window.__editorBlurs = 0;
         document.activeElement.addEventListener('blur', () => window.__editorBlurs++);
     });
-    await page.touchscreen.tap(100, 36);
+    await tapPlain();
     assert.equal(await page.evaluate(() => window.__editorBlurs), 0);
 
     // Gboard reopens an existing word: include its unchanged prefix in the preedit range.
@@ -91,7 +96,7 @@ export async function inputSmoke(page, url) {
     await settle();
     assert.equal((await snapshot()).shortcuts, 2);
 
-    await page.touchscreen.tap(100, 36);
+    await tapPlain();
     await page.touchscreen.tap(300, 500); // Background tap dismisses the editor.
     const dismissed = await snapshot();
     await page.keyboard.insertText('not inserted');

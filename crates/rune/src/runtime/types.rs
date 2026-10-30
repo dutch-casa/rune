@@ -85,7 +85,7 @@ pub(crate) struct Node {
     pub(super) selection_copy: Option<crate::el::SelectionCopy>,
     /// `El::on_selection_change`.
     pub(super) on_selection_change: Option<crate::el::SelectionChangeFn>,
-    pub(super) a11y: crate::el::A11y,
+    pub(super) a11y: crate::el_a11y::A11y,
     /// Inside an `El::inert` subtree (this element or an ancestor).
     pub(crate) inert: bool,
     pub(super) press_scale: Option<f32>,

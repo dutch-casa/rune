@@ -174,7 +174,7 @@ fn a_keystroke_lands_its_rows_and_height_in_one_frame() {
     let find = |rt: &Runtime<State>, key: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key));
     let open = find(&rt, "models-content").unwrap().rect;
     let top = |rt: &Runtime<State>, id: &str| {
-        let vp = find(rt, "viewport").unwrap().rect;
+        let vp = find(rt, "models-listbox").unwrap().rect;
         find(rt, &format!("models-option-{id}")).map(|e| (e.rect[1] - vp[1], e.opacity))
     };
     key(&mut rt, Key::Text("0".into()), Mods::default());
@@ -245,7 +245,7 @@ fn a_custom_trigger_opens_a_list_that_fits_the_window_under_a_search_header() {
     let content = find(&rt, "models-content").rect;
     assert!(content[1] + content[3] <= 300.0, "the popup runs off the window: {content:?}");
     let [_, header_top, _, header_height] = find(&rt, "header").rect;
-    let viewport = find(&rt, "viewport").rect;
+    let viewport = find(&rt, "models-listbox").rect;
     assert!(viewport[1] >= header_top + header_height, "rows start under the search header");
     assert!(viewport[3] > 100.0, "the list uses the room below: {viewport:?}");
     key(&mut rt, Key::Up, Mods::default());
@@ -265,7 +265,7 @@ fn typing_crossfades_the_rows_in_view() {
     for _ in 0..60 { rt.frame(1.0 / 60.0); }
     // (top in the viewport, opacity, leaving)
     let row = |rt: &Runtime<State>, id: &str| {
-        let vp = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("viewport")).unwrap().rect;
+        let vp = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("models-listbox")).unwrap().rect;
         let key = format!("models-option-{id}");
         let e = rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key.as_str()))?;
         Some((e.rect[1] - vp[1], e.opacity, e.exiting))

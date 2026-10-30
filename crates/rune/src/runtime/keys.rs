@@ -49,6 +49,7 @@ impl<S: 'static> Runtime<S> {
             }
         }
         if self.focus_key(ev, shown, one) { return true; }
+        if self.ancestor_escape(ev, one) { return true; }
         if self.readonly_input_key(ev, one) { return true; }
         let input_handles = match &ev.key {
             crate::edit::Key::Function(_) | crate::edit::Key::ContextMenu | crate::edit::Key::Tab | crate::edit::Key::PageUp | crate::edit::Key::PageDown => false,
@@ -249,6 +250,19 @@ impl<S: 'static> Runtime<S> {
         let Some(i) = self.focused_index() else { return false };
         if !self.can_focus(i) || self.focused_input().is_some() { return false; }
         let handlers: Vec<_> = std::iter::successors(Some(i), |&j| self.nodes[j].parent)
+            .take_while(|&j| self.allowed(j) && !self.subtree_exiting(j))
+            .filter_map(|j| self.nodes[j].focus.key.clone())
+            .collect();
+        handlers.into_iter().any(|f| Tx::took(f(states!(self), ev, tx), tx))
+    }
+
+    /// Unmodified Escape from a focused field reaches ancestor `El::on_key` before the editor blurs.
+    /// Modified Escape, other edit keys, and an open composition never come here.
+    fn ancestor_escape(&mut self, ev: &KeyEvent, tx: &mut Tx) -> bool {
+        if ev.key != crate::Key::Escape || ev.mods != crate::Mods::default() { return false; }
+        let Some(i) = self.focused_index() else { return false; };
+        if self.focused_input().is_none() { return false; }
+        let handlers: Vec<_> = std::iter::successors(self.nodes[i].parent, |&j| self.nodes[j].parent)
             .take_while(|&j| self.allowed(j) && !self.subtree_exiting(j))
             .filter_map(|j| self.nodes[j].focus.key.clone())
             .collect();

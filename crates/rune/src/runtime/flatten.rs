@@ -660,7 +660,7 @@ fn flatten_ref(
         selection_group: el.selection_group,
         selection_copy: el.selection_copy.clone(),
         on_selection_change: el.on_selection_change.clone(),
-        a11y: el.a11y,
+        a11y: el.a11y.clone(),
         inert,
         press_scale: el.press_scale,
         static_scale: el.scale,

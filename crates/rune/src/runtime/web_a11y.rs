@@ -1,6 +1,6 @@
 //! Semantic DOM projection and native editor contexts for the retained scene.
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-use crate::el::LabelSource;
+use crate::el_a11y::LabelSource;
 use std::hash::{Hash, Hasher};
 
 use serde_json::{Value, json};
@@ -70,8 +70,17 @@ pub(crate) struct A11yItem {
     pub disabled: bool,
     pub checked: Option<&'static str>,
     pub selected: bool,
+    /// Path of the mounted cursor descendant this owner points at.
+    pub activedescendant: Option<String>,
+    /// Resolved path of the node this item controls. Absent when unset, stale, or ambiguous.
+    pub controls: Option<String>,
+    pub orientation: Option<crate::Axis>,
+    /// This node owns `on_press` and passes the current admission. Not a tab stop.
+    pub pressable: bool,
     pub help: Option<String>,
     pub modal: bool,
+    pub invalid: bool,
+    pub range: Option<crate::ValueRange>,
     pub edit: Option<A11yEdit>,
 }
 
@@ -141,6 +150,19 @@ impl A11yItem {
         if self.disabled { obj.insert("disabled".into(), json!(true)); }
         if let Some(checked) = self.checked { obj.insert("checked".into(), json!(checked)); }
         if self.selected { obj.insert("selected".into(), json!(true)); }
+        if let Some(path) = &self.activedescendant { obj.insert("activedescendant".into(), json!(path)); }
+        if let Some(path) = &self.controls { obj.insert("controls".into(), json!(path)); }
+        if let Some(axis) = self.orientation {
+            obj.insert("orientation".into(), json!(match axis {
+                crate::Axis::Horizontal => "horizontal",
+                crate::Axis::Vertical => "vertical",
+            }));
+        }
+        if self.pressable { obj.insert("pressable".into(), json!(true)); }
+        if self.invalid { obj.insert("invalid".into(), json!(true)); }
+        if let Some(range) = self.range {
+            obj.insert("range".into(), json!({"value": range.value, "min": range.min, "max": range.max}));
+        }
         if let Some(help) = &self.help { obj.insert("help".into(), json!(help)); }
         if self.modal { obj.insert("modal".into(), json!(true)); }
         if let Some(edit) = &self.edit {
@@ -242,17 +264,180 @@ impl<S: 'static> Runtime<S> {
         }
         parts.join(" ")
     }
+    /// Visible text of a flattened option, tab, or row.
+    ///
+    /// A caption label and an editor value stay with their owners. `repeated` means the explicit
+    /// name only repeats that text, so the control should not say it twice.
+    fn flattened_contents(&self, root: usize, end: usize, name: Option<&str>, shown: impl Fn(usize) -> bool) -> (String, bool) {
+        let name = name.map(str::trim).filter(|s| !s.is_empty());
+        let mut text = String::new();
+        let mut repeated = false;
+        for j in root..end {
+            if !shown(j) || self.nodes[j].input.is_some() || self.nodes[j].role == "label" { continue; }
+            let Some(spec) = self.nodes[j].text.as_deref().filter(|t| !t.redacted) else { continue; };
+            let piece = clean_slice(spec, 0, spec.content.len());
+            let piece = piece.trim();
+            if piece.is_empty() { continue; }
+            repeated |= name.is_some_and(|name| name == piece);
+            if !text.is_empty() { text.push(' '); }
+            text.push_str(piece);
+        }
+        repeated |= name.is_some_and(|name| name == text.as_str());
+        (text, repeated)
+    }
+
+    /// One prepass from key and path to node. Resolving each controller then walks only that key's chain.
+    fn control_facts(&self) -> (Vec<Option<String>>, Vec<bool>) {
+        let n = self.nodes.len();
+        let mut path = vec![None; n];
+        let mut target = vec![false; n];
+        if !self.nodes.iter().any(|node| node.a11y.controls.is_some()) { return (path, target); }
+        let mut first = std::collections::HashMap::<&str, u32>::new();
+        let mut next = vec![u32::MAX; n];
+        let mut by_path = std::collections::HashMap::<&str, u32>::with_capacity(n);
+        for (i, node) in self.nodes.iter().enumerate().rev() {
+            by_path.insert(node.path.as_str(), i as u32);
+            if let Some(key) = node.key.as_deref() {
+                next[i] = first.insert(key, i as u32).unwrap_or(u32::MAX);
+            }
+        }
+        let live: Vec<bool> = (0..n).map(|i| self.control_current(i)).collect();
+        for i in 0..n {
+            let Some(selector) = self.nodes[i].a11y.controls.as_deref() else { continue; };
+            let mut found = None;
+            let mut consider = |j: usize| -> bool {
+                if !live[j] { return true; }
+                match found {
+                    None => { found = Some(j); true }
+                    Some(prev) if prev == j => true,
+                    Some(_) => false,
+                }
+            };
+            let mut ambiguous = false;
+            if let Some(&j) = by_path.get(selector) {
+                ambiguous = !consider(j as usize);
+            }
+            if !ambiguous {
+                let tails = std::iter::once(selector).chain(selector.match_indices('/').map(|(at, _)| &selector[at + 1..]));
+                'tails: for tail in tails {
+                    let Some(&start) = first.get(tail) else { continue; };
+                    let mut j = start;
+                    while j != u32::MAX {
+                        let candidate = &self.nodes[j as usize];
+                        let matches = crate::flight::selects(selector, &candidate.path, candidate.key.as_deref());
+                        if matches && !consider(j as usize) {
+                            ambiguous = true;
+                            break 'tails;
+                        }
+                        j = next[j as usize];
+                    }
+                }
+            }
+            if ambiguous { continue; }
+            if let Some(j) = found {
+                path[i] = Some(self.nodes[j].path.clone());
+                target[j] = true;
+            }
+        }
+        (path, target)
+    }
+
+    pub(super) fn control_paths(&self) -> Vec<Option<String>> {
+        self.control_facts().0
+    }
+
+    fn control_current(&self, i: usize) -> bool {
+        self.in_scope(i) && !self.subtree_exiting(i) && !self.subtree_unmounted(i)
+            && std::iter::successors(Some(i), |&j| self.nodes[j].parent).all(|j| self.nodes[j].vis.opacity > 0.01)
+    }
+
+    /// `on_press` plus the admission `web_a11y_action` rechecks. Not focus.
+    pub(super) fn press_capable(&self, i: usize) -> bool {
+        let n = &self.nodes[i];
+        if n.on_press.is_none() || !self.allowed(i) || self.subtree_exiting(i) || self.subtree_unmounted(i) {
+            return false;
+        }
+        if std::iter::successors(Some(i), |&j| self.nodes[j].parent).any(|j| self.nodes[j].vis.opacity <= 0.01) {
+            return false;
+        }
+        let rect = rect4(self.drawn_box(i));
+        rect[2] > 0.0 && rect[3] > 0.0
+    }
+
+    /// Point a keyboard owner at its cursor-marked mounted descendant.
+    ///
+    /// Selection is not the cursor. A nearer focusable grid or tree keeps its own row.
+    /// An editor points at a cursor only when that cursor is owned by the element `controls` names.
+    /// Two cursors under one owner, or a stale control, leave the relationship unset.
+    fn assign_active_descendants(&self, items: &mut [A11yItem], origins: &[usize]) {
+        debug_assert_eq!(items.len(), origins.len());
+        let n = self.nodes.len();
+        let mut keyboard_owner = vec![None; n];
+        for i in 0..n {
+            let parent = self.nodes[i].parent;
+            let role = self.nodes[i].role;
+            keyboard_owner[i] = if matches!(role, "tree" | "treegrid" | "grid") && self.can_focus(i) {
+                Some(i)
+            } else {
+                parent.and_then(|p| keyboard_owner[p])
+            };
+        }
+        #[derive(Clone, Copy)]
+        enum Slot { Empty, One(usize), Many }
+        let mut slot = vec![Slot::Empty; n];
+        for (k, &origin) in origins.iter().enumerate() {
+            if !self.nodes[origin].focus.cursor { continue; }
+            let Some(owner) = keyboard_owner[origin].filter(|&owner| owner != origin) else { continue; };
+            slot[owner] = match slot[owner] {
+                Slot::Empty => Slot::One(k),
+                Slot::One(_) | Slot::Many => Slot::Many,
+            };
+        }
+        for (k, &origin) in origins.iter().enumerate() {
+            if let Slot::One(desc) = slot[origin] {
+                items[k].activedescendant = Some(items[desc].path.clone());
+            }
+        }
+        let Some(focus) = self.focused_index().filter(|&i| self.nodes[i].input.is_some()) else { return; };
+        let Some(editor) = origins.iter().position(|&origin| origin == focus) else { return; };
+        let Some(controlled) = items[editor].controls.as_deref() else { return; };
+        let by_path: std::collections::HashMap<&str, usize> = items.iter().enumerate().map(|(k, it)| (it.path.as_str(), k)).collect();
+        if !by_path.contains_key(controlled) { return; }
+        let mut cursor = None;
+        for (k, &origin) in origins.iter().enumerate() {
+            if !self.nodes[origin].focus.cursor || items[k].path == controlled { continue; }
+            let mut parent = items[k].parent.as_deref();
+            let mut owned = false;
+            while let Some(path) = parent {
+                if path == controlled { owned = true; break; }
+                parent = by_path.get(path).and_then(|&j| items[j].parent.as_deref());
+            }
+            if !owned { continue; }
+            cursor = match cursor {
+                None => Some(k),
+                Some(_) => return,
+            };
+        }
+        if let Some(k) = cursor {
+            items[editor].activedescendant = Some(items[k].path.clone());
+        }
+    }
+
+
 
     fn a11y_item(&self, i: usize, kind: &'static str, parent: Option<String>, name: Option<String>, tab: Option<i32>) -> A11yItem {
         let n = &self.nodes[i];
         A11yItem {
             kind, path: n.path.clone(), rect: rect4(self.drawn_box(i)), font_size: 0.0,
-            level: None, expanded: n.a11y.expanded, text: String::new(), runs: Vec::new(),
+            level: if kind == "treeitem" { n.a11y.level } else { None },
+            expanded: n.a11y.expanded, text: String::new(), runs: Vec::new(),
             name, labelled_by: None, parent, tab,
             disabled: n.a11y.disabled,
             checked: n.a11y.checked.map(|s| if s.indeterminate { "mixed" } else if s.checked { "true" } else { "false" }),
-            selected: n.focus.selected, help: n.help.clone().filter(|_| !n.help_cut || n.elided.is_some()),
-            modal: self.active_modal() == Some(i), edit: None,
+            selected: n.focus.selected, activedescendant: None,
+            controls: None, orientation: n.a11y.orientation, pressable: self.press_capable(i),
+            help: n.help.clone().filter(|_| !n.help_cut || n.elided.is_some()),
+            modal: self.active_modal() == Some(i), invalid: n.a11y.invalid, range: n.a11y.range, edit: None,
         }
     }
 
@@ -268,11 +453,16 @@ impl<S: 'static> Runtime<S> {
 
     fn collect_a11y(&self, track: bool) -> (Vec<A11yItem>, Vec<A11ySource>) {
         let mut out: Vec<A11yItem> = Vec::new();
+        let mut origins = Vec::new();
         let mut sources = Vec::new();
         let mut last_flow_parent: Option<usize> = None;
         let visible = |i: usize| self.in_scope(i) && !self.subtree_exiting(i) && !self.subtree_unmounted(i)
             && std::iter::successors(Some(i), |&j| self.nodes[j].parent).all(|j| self.nodes[j].vis.opacity > 0.01);
         let owners = self.subtree_owners(|i| self.nodes[i].input.is_some() && visible(i));
+        let caption_controls = self.subtree_owners(|i| {
+            let n = &self.nodes[i];
+            (n.input.is_some() || n.role == "combobox") && visible(i)
+        });
         let captions = self.subtree_owners(|i| {
             let n = &self.nodes[i];
             n.role == "label" && visible(i) && {
@@ -300,25 +490,43 @@ impl<S: 'static> Runtime<S> {
         let mut labels: Vec<_> = self.nodes.iter().map(|n| n.label.as_deref()
             .filter(|s| !s.trim().is_empty()).map(|s| (s, n.a11y.label_source))).collect();
         for (i, n) in self.nodes.iter().enumerate().rev() {
-            if n.input.is_none() && (n.role == "textbox" || n.a11y.label_source == LabelSource::Composed)
-                && let Some(label) = labels[i] && let Some(editor) = owners[i]
+            if n.input.is_none() && (matches!(n.role, "textbox" | "combobox") || n.a11y.label_source == LabelSource::Composed)
+                && let Some(label) = labels[i] && let Some(editor) = owners[i].or(caption_controls[i])
                 && labels[editor].is_none_or(|(_, source)| source < label.1)
             {
                 labels[editor] = Some(label);
             }
         }
-        let mut retained: Vec<Option<String>> = vec![None; self.nodes.len()];
+        let (control_path, control_target) = self.control_facts();
+        let nlen = self.nodes.len();
+        let mut shell_of = vec![None; nlen];
+        let mut claimed = vec![false; nlen];
+        for i in 0..nlen {
+            if self.nodes[i].role != "combobox" { continue; }
+            let Some(editor) = owners[i] else { continue; };
+            if editor == i { continue; }
+            if claimed[editor] { shell_of[editor] = None; }
+            else { claimed[editor] = true; shell_of[editor] = Some(i); }
+        }
+        let shell_expanded: Vec<Option<bool>> = shell_of.iter().map(|shell| shell.and_then(|s| self.nodes[s].a11y.expanded)).collect();
+        let mut retained: Vec<Option<String>> = vec![None; nlen];
         let mut i = 0;
         while i < self.nodes.len() {
             let n = &self.nodes[i];
             let end = self.subtree_end(i);
-            if !visible(i) || matches!(n.role, "none" | "presentation") {
+            if !visible(i) || (matches!(n.role, "none" | "presentation") && !control_target[i]) {
                 retained[i] = n.parent.and_then(|p| retained[p].clone());
                 i += 1;
                 last_flow_parent = None;
                 continue;
             }
             let parent = n.parent.and_then(|p| retained[p].clone());
+            if owners[i].is_some_and(|editor| shell_of[editor] == Some(i)) {
+                retained[i] = parent;
+                i += 1;
+                last_flow_parent = None;
+                continue;
+            }
             let tab = self.can_focus(i).then_some(if tabbable[i] { n.focus.order } else { -1 });
             if let Some(input) = n.input.as_ref() {
                 let secure = n.a11y.secure || input.edit.is_secure();
@@ -327,12 +535,15 @@ impl<S: 'static> Runtime<S> {
                 let (base, text, anchor, focus) = if secure || focused { (0, "", 0, 0) }
                     else if readonly { (0, input.edit.text.as_str(), 0, 0) }
                     else { context_window(&input.edit) };
-                let mut item = self.a11y_item(i, "textbox", parent, labels[i].map(|(s, _)| s.to_owned()), tab);
+                let kind = if shell_of[i].is_some() || n.role == "combobox" { "combobox" } else { "textbox" };
+                let mut item = self.a11y_item(i, kind, parent, labels[i].map(|(s, _)| s.to_owned()), tab);
+                if item.expanded.is_none() { item.expanded = shell_expanded[i]; }
                 item.labelled_by = caption_for(i, item.name.as_deref());
                 item.edit = Some(A11yEdit { text: (!focused).then(|| text.to_owned()), base, anchor, focus,
                     secure, readonly, single: input.single_line, placeholder: input.placeholder.clone() });
                 A11yItem::record_source(&mut sources, track, &item, n.id);
                 out.push(item);
+                origins.push(i);
                 i = end;
                 last_flow_parent = None;
                 continue;
@@ -347,11 +558,14 @@ impl<S: 'static> Runtime<S> {
                 "text" | "heading" | "button" | "group" | "label" => None,
                 role => Some(role),
             }};
-            let editor_owns_name = owners[i].is_some_and(|editor| labels[i].is_some()
+            let control_owns_name = owners[i].or(caption_controls[i]).is_some_and(|editor| labels[i].is_some()
                 && labels[i].map(|(name, _)| name) == labels[editor].map(|(name, _)| name))
                 && (n.role == "textbox" || n.a11y.label_source == LabelSource::Composed)
                 && tab.is_none() && !n.focus.group;
-            let semantic_kind = if semantic_kind == Some("group") && editor_owns_name { None } else { semantic_kind };
+            let mut semantic_kind = if semantic_kind == Some("group") && control_owns_name { None } else { semantic_kind };
+            if control_target[i] && semantic_kind.is_none_or(|k| matches!(k, "none" | "presentation")) {
+                semantic_kind = Some("group");
+            }
             let button_like = (n.role == "button" || n.on_press.is_some()) && !n.window_drag;
             let nested_press = (i + 1..end).any(|j| self.nodes[j].on_press.is_some()
                 || self.nodes[j].role == "button" || self.nodes[j].input.is_some());
@@ -381,19 +595,28 @@ impl<S: 'static> Runtime<S> {
                         item.text.push_str(text);
                     }
                     if name_in_content { item.name = None; }
-                } else if matches!(kind, "tab" | "option") {
-                    let name_in_content = item.name.as_deref().is_some_and(|name| {
-                        (i..end).any(|j| {
-                            let node = &self.nodes[j];
-                            visible(j) && node.input.is_none() && node.text.as_deref()
-                                .filter(|t| !t.redacted)
-                                .is_some_and(|t| clean_slice(t, 0, t.content.len()).trim() == name.trim())
-                        })
-                    });
-                    if name_in_content { item.name = None; }
-                    else if item.name.is_none() {
-                        let label = self.descendant_label(i + 1, end);
-                        if !label.is_empty() { item.name = Some(label); }
+                } else if matches!(kind, "tab" | "option" | "row" | "gridcell") {
+                    let flatten = button_like && !nested_press && kind != "row";
+                    if flatten {
+                        // The subtree is dropped, so visible text, including support, lives here.
+                        // A name that only repeats that text is cleared. A different explicit name stays.
+                        let (text, repeated) = self.flattened_contents(i, end, item.name.as_deref(), &visible);
+                        if !text.is_empty() { item.text = text; }
+                        if repeated { item.name = None; }
+                    } else if matches!(kind, "tab" | "option") {
+                        if item.name.as_deref().is_some_and(|name| {
+                            (i..end).any(|j| {
+                                let node = &self.nodes[j];
+                                visible(j) && node.input.is_none() && node.text.as_deref()
+                                    .filter(|t| !t.redacted)
+                                    .is_some_and(|t| clean_slice(t, 0, t.content.len()).trim() == name.trim())
+                            })
+                        }) {
+                            item.name = None;
+                        } else if item.name.is_none() {
+                            let label = self.descendant_label(i + 1, end);
+                            if !label.is_empty() { item.name = Some(label); }
+                        }
                     }
                 } else if matches!(kind, "menuitem" | "menuitemcheckbox" | "menuitemradio") && item.name.is_none() {
                     let label = self.descendant_label(i + 1, end);
@@ -402,8 +625,10 @@ impl<S: 'static> Runtime<S> {
                 retained[i] = Some(n.path.clone());
                 A11yItem::record_source(&mut sources, track, &item, n.id);
                 out.push(item);
+                origins.push(i);
                 last_flow_parent = None;
-                if kind == "combobox" || ((button_like || matches!(kind, "checkbox" | "radio" | "switch")) && !nested_press) {
+                let keeps_editor = kind == "combobox" && owners[i].is_some_and(|editor| editor != i);
+                if !keeps_editor && (kind == "combobox" || ((button_like || matches!(kind, "checkbox" | "radio" | "switch")) && !nested_press && kind != "row")) {
                     i = end;
                     continue;
                 }
@@ -416,6 +641,7 @@ impl<S: 'static> Runtime<S> {
                     item.text = label;
                     A11yItem::record_source(&mut sources, track, &item, n.id);
                     out.push(item);
+                    origins.push(i);
                     i = end;
                     last_flow_parent = None;
                     continue;
@@ -489,6 +715,7 @@ impl<S: 'static> Runtime<S> {
                     item.runs = rich_runs;
                     A11yItem::record_source(&mut sources, track, &item, n.id);
                     out.push(item);
+                    origins.push(i);
                     last_flow_parent = if is_heading || is_label { None } else { flow_group };
                 }
             } else if n.role == "heading" && let Some(lbl) = n.label.clone().filter(|s| !s.trim().is_empty()) {
@@ -499,11 +726,21 @@ impl<S: 'static> Runtime<S> {
                 item.text = lbl;
                 A11yItem::record_source(&mut sources, track, &item, n.id);
                 out.push(item);
+                origins.push(i);
                 last_flow_parent = None;
             }
             if retained[i].is_none() { retained[i] = n.parent.and_then(|p| retained[p].clone()); }
             i += 1;
         }
+        for (item, &origin) in out.iter_mut().zip(&origins) {
+            item.controls = control_path.get(origin).and_then(|p| p.clone());
+            if item.controls.is_none() {
+                if let Some(shell) = shell_of.get(origin).copied().flatten() {
+                    item.controls = control_path.get(shell).and_then(|p| p.clone());
+                }
+            }
+        }
+        self.assign_active_descendants(&mut out, &origins);
         (out, sources)
     }
 
@@ -601,7 +838,7 @@ impl<S: 'static> Runtime<S> {
                 self.pending.scroll_to.push(super::ScrollReveal::into_view(None, path.to_owned()));
                 true
             }
-            Some("a11y_press") if self.nodes[i].on_press.is_some() => {
+            Some("a11y_press") if self.press_capable(i) => {
                 self.queue.push(Action::Press(path.to_owned(), crate::PointerButton::Primary));
                 true
             }
@@ -855,5 +1092,229 @@ mod tests {
         assert!(!rt.web_a11y_action(&event));
         assert!(!rt.web_a11y_action(&focus));
         assert_eq!(rt.state.presses, 0);
+    }
+    #[test]
+    fn flattened_option_and_tab_names_keep_visible_text() {
+        struct Form { edit: crate::TextEdit }
+        fn view(s: &Form, _: &mut Cx<Form>) -> El {
+            let style = crate::TextStyle::new(14.0, 400.0);
+            crate::col().size(360.0, 1100.0)
+                .child(crate::el().key("blue").role("option").label("Blue").size(160.0, 28.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Blue").font(style)).child(crate::text("Primary").font(style)))
+                .child(crate::el().key("named").role("option").label("Choose blue").size(160.0, 28.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Blue").font(style)).child(crate::text("Support").font(style)))
+                .child(crate::el().key("captioned").role("option").label("Blue").size(160.0, 28.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Blue").font(style))
+                    .child(crate::text("Account").role("label").font(style).size(80.0, 16.0)))
+                .child(crate::el().key("tab").role("tab").label("Blue").size(80.0, 24.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Blue").font(style)).child(crate::text("Extra").font(style)))
+                .child(crate::el().key("plain").role("option").label("Plain").size(80.0, 24.0)
+                    .child(crate::text("Plain").font(style)))
+                .child(crate::el().key("nest").role("option").label("Outer").size(160.0, 28.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Outer").font(style))
+                    .child(crate::el().key("inner").role("button").label("Inner").size(40.0, 20.0).on_press(|_: &mut Form| {})))
+                .child(crate::el().key("only").role("option").label("Only").size(80.0, 24.0).on_press(|_: &mut Form| {}))
+                .child(crate::el().key("gridrow").role("row").size(160.0, 24.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Ada").font(style)).child(crate::text("Open").font(style)))
+                .child(crate::el().key("hidden").role("option").label("Blue").size(120.0, 28.0).on_press(|_: &mut Form| {})
+                    .child(crate::text("Blue").opacity(0.0).font(style)).child(crate::text("Shown").font(style)))
+                .child(crate::col().key("colour-field").size(200.0, 60.0)
+                    .child(crate::text("Colour").role("label").key("caption").font(style).size(80.0, 16.0))
+                    .child(crate::row().key("combo").role("combobox").label_if_missing("Colour").size(160.0, 28.0)
+                        .child(crate::text("Blue").font(style))))
+                .child(crate::col().key("account-field").size(200.0, 60.0)
+                    .child(crate::text("Account").role("label").key("account-caption").font(style).size(80.0, 16.0))
+                    .child(crate::text_input(&s.edit, style).key("account").label_if_missing("Account").size(120.0, 24.0)))
+                .child(crate::el().key("meter").role("progressbar").label("Load").size(80.0, 8.0)
+                    .value_range(40.0, 0.0..=100.0).invalid(true))
+                .child(crate::el().key("off").role("checkbox").label("Off").checked(false).disabled(true).size(20.0, 20.0))
+        }
+        let mut rt = Runtime::new(Form { edit: crate::TextEdit::new("secret") }, view, (400.0, 1200.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let item = |key: &str| items.iter().find(|it| it.path == path(key)).unwrap_or_else(|| panic!("no {key}"));
+        assert_eq!((item("blue").name.as_deref(), item("blue").text.as_str()), (None, "Blue Primary"));
+        assert!(!items.iter().any(|it| it.parent.as_deref() == Some(item("blue").path.as_str())));
+        assert_eq!((item("named").name.as_deref(), item("named").text.as_str()), (Some("Choose blue"), "Blue Support"));
+        assert_eq!((item("captioned").name.as_deref(), item("captioned").text.as_str()), (None, "Blue"));
+        assert!(!item("captioned").text.contains("Account"));
+        assert_eq!((item("tab").name.as_deref(), item("tab").text.as_str()), (None, "Blue Extra"));
+        assert_eq!((item("plain").name.as_deref(), item("plain").text.as_str()), (None, ""));
+        assert!(items.iter().any(|it| it.parent.as_deref() == Some(item("plain").path.as_str()) && it.text == "Plain"));
+        assert_eq!(item("nest").name.as_deref(), None);
+        assert!(items.iter().any(|it| it.path == path("inner")));
+        assert_eq!(item("only").name.as_deref(), Some("Only"));
+        assert_eq!((item("hidden").name.as_deref(), item("hidden").text.as_str()), (Some("Blue"), "Shown"));
+        assert_eq!(item("gridrow").text.as_str(), "");
+        assert!(item("gridrow").pressable && item("gridrow").tab.is_none());
+        assert!(items.iter().any(|it| it.parent.as_deref() == Some(item("gridrow").path.as_str()) && it.text == "Ada"));
+        assert!(items.iter().any(|it| it.parent.as_deref() == Some(item("gridrow").path.as_str()) && it.text == "Open"));
+        assert_eq!((item("combo").name.as_deref(), item("combo").text.as_str(), item("combo").labelled_by.as_deref()),
+            (Some("Colour"), "Blue", Some(path("caption").as_str())));
+        assert_eq!(item("account").name.as_deref(), Some("Account"));
+        assert_eq!(item("account").labelled_by.as_deref(), Some(path("account-caption").as_str()));
+        assert_eq!(item("account").edit.as_ref().unwrap().text.as_deref(), Some("secret"));
+        assert_eq!(item("meter").range, Some(crate::ValueRange { value: 40.0, min: 0.0, max: 100.0 }));
+        assert!(item("meter").invalid);
+        assert_eq!(item("meter").to_json()["range"], json!({"value": 40.0, "min": 0.0, "max": 100.0}));
+        assert_eq!(item("meter").to_json()["invalid"], true);
+        assert_eq!((item("off").checked, item("off").disabled), (Some("false"), true));
+        let info = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("meter")).unwrap();
+        assert_eq!((info.range, info.invalid, info.disabled), (item("meter").range, true, false));
+        let off = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("off")).unwrap();
+        assert_eq!((off.checked, off.mixed, off.disabled, off.invalid), (Some(false), false, true, false));
+        let tree = crate::tooling::tree_json(&rt, 0.0);
+        let els = tree["elements"].as_array().unwrap();
+        let meter = els.iter().find(|e| e["key"] == "meter").unwrap();
+        assert_eq!(meter["range"], json!({"value": 40.0, "min": 0.0, "max": 100.0}));
+        assert_eq!(meter["invalid"], true);
+        let off_json = els.iter().find(|e| e["key"] == "off").unwrap();
+        assert_eq!(off_json["checked"], false);
+        assert_eq!(off_json["disabled"], true);
+        assert!(serde_json::from_str::<serde_json::Value>(&rt.a11y_json()).unwrap().is_array());
+    }
+
+    #[test]
+    fn active_descendant_follows_the_keyboard_owner_and_clears_when_it_leaves() {
+        struct Rel { show_row: bool, show_option: bool, edit: crate::TextEdit }
+        fn view(s: &Rel, _: &mut Cx<Rel>) -> El {
+            let style = crate::TextStyle::new(14.0, 400.0);
+            let mut folder = crate::col().key("folder").role("group").focus_group().label("Folder")
+                .focus_selected(s.show_row).size(200.0, 28.0);
+            if s.show_row {
+                folder = folder.child(crate::el().key("nested-row").role("treeitem").level(8).label("Notes")
+                    .focus_selected(true).focus_cursor(true).size(180.0, 18.0).child(crate::text("Notes").font(style)));
+            }
+            let tree = crate::col().key("files").role("tree").focusable(true).label("Files").size(220.0, 120.0)
+                .child(crate::el().key("also").role("treeitem").label("Also").focus_selected(true).size(180.0, 18.0))
+                .child(folder)
+                .child(crate::col().key("inner").role("grid").focusable(true).size(200.0, 40.0)
+                    .child(crate::el().key("inner-row").role("row").focus_selected(true).focus_cursor(true).label("Inside").size(180.0, 18.0)));
+            let mut popup = crate::col().key("popup").role("dialog").size(200.0, 160.0)
+                .child(crate::text_input(&s.edit, style).key("search").size(160.0, 28.0));
+            if s.show_option {
+                popup = popup.child(crate::col().key("opts").role("group").focus_group().label("Results").focus_selected(true)
+                    .child(crate::el().key("skip").role("option").label("Skip").focusable(true).focus_selected(true).size(140.0, 20.0))
+                    .child(crate::el().key("hit").role("option").label("Blue").focus_selected(true).size(160.0, 24.0)
+                        .on_press(|_: &mut Rel| {}).child(crate::text("Blue").font(style)).child(crate::text("Primary").font(style))));
+            }
+            crate::col().size(440.0, 420.0).child(tree).child(popup)
+                .child(crate::text_input(&s.edit, style).key("outside").size(160.0, 28.0))
+        }
+        let mut rt = Runtime::new(Rel { show_row: true, show_option: true, edit: crate::TextEdit::new("") }, view, (440.0, 500.0), Env::default());
+        rt.frame(0.0);
+        let path = |rt: &Runtime<Rel>, key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        fn at<'a>(items: &'a [A11yItem], p: &str) -> &'a A11yItem {
+            items.iter().find(|it| it.path == p).unwrap_or_else(|| panic!("no {p}"))
+        }
+        let owned = |items: &[A11yItem]| items.iter().all(|it| it.activedescendant.as_ref().is_none_or(|p| items.iter().any(|other| other.path == *p)));
+        let items = rt.web_a11y_items();
+        let (files, row, inner, inner_row, folder) = (path(&rt, "files"), path(&rt, "nested-row"), path(&rt, "inner"), path(&rt, "inner-row"), path(&rt, "folder"));
+        assert_eq!(at(&items, &files).activedescendant.as_deref(), Some(row.as_str()));
+        assert!(at(&items, &folder).activedescendant.is_none());
+        assert_eq!(at(&items, &inner).activedescendant.as_deref(), Some(inner_row.as_str()));
+        assert_ne!(at(&items, &files).activedescendant.as_deref(), Some(inner_row.as_str()));
+        assert_eq!(at(&items, &row).level, Some(8));
+        assert_eq!(at(&items, &row).to_json()["l"], 8);
+        assert!(owned(&items));
+        let (search, outside, hit) = (path(&rt, "search"), path(&rt, "outside"), path(&rt, "hit"));
+        rt.set_focus(Some(outside.clone()), true);
+        let outside_items = rt.web_a11y_items();
+        assert!(at(&outside_items, &outside).activedescendant.is_none());
+        rt.set_focus(Some(search.clone()), true);
+        let focused = rt.web_a11y_items();
+        assert!(at(&focused, &search).activedescendant.is_none(), "an editor does not guess a sibling option");
+        assert!(at(&focused, &path(&rt, "opts")).activedescendant.is_none());
+        assert_eq!((at(&focused, &hit).name.as_deref(), at(&focused, &hit).text.as_str()), (None, "Blue Primary"));
+        assert!(owned(&focused));
+        rt.update(|s, _| { s.show_row = false; s.show_option = false; });
+        rt.frame(0.0);
+        let search = path(&rt, "search");
+        rt.set_focus(Some(search.clone()), true);
+        let gone = rt.web_a11y_items();
+        assert!(at(&gone, &search).activedescendant.is_none());
+        assert!(at(&gone, &path(&rt, "files")).activedescendant.is_none());
+        assert!(owned(&gone));
+    }
+
+    #[test]
+    fn cursor_controls_and_pressable_rows_use_declared_facts() {
+        struct Rel { show_c: bool, c_selected: bool, edit: crate::TextEdit, presses: u32 }
+        fn view(s: &Rel, _: &mut Cx<Rel>) -> El {
+            let style = crate::TextStyle::new(14.0, 400.0);
+            let mut grid = crate::col().key("grid").role("grid").focusable(true).size(220.0, 80.0)
+                .child(crate::el().key("a").role("row").label("A").focus_selected(true).size(180.0, 18.0))
+                .child(crate::el().key("b").role("row").label("B").size(180.0, 18.0));
+            if s.show_c {
+                grid = grid.child(crate::el().key("c").role("row").label("C").focus_selected(s.c_selected).focus_cursor(true).size(180.0, 18.0));
+            }
+            let search = crate::col().key("search-shell").role("combobox").expanded(true).controls("hits").label("Find")
+                .child(crate::text_input(&s.edit, style).single_line().key("search").size(160.0, 24.0).on_edit(|s: &mut Rel| &mut s.edit));
+            let hits = crate::col().key("hits").role("listbox").size(160.0, 48.0)
+                .child(crate::el().key("opt-a").role("option").label("A").focus_selected(true).size(140.0, 18.0))
+                .child(crate::el().key("opt-c").role("option").label("C").focus_cursor(true).size(140.0, 18.0));
+            crate::col().size(480.0, 360.0)
+                .child(grid)
+                .child(search)
+                .child(hits)
+                .child(crate::text_input(&s.edit, style).key("other").size(160.0, 24.0))
+                .child(crate::el().key("pane").size(80.0, 40.0))
+                .child(crate::el().key("grip").role("separator").size(6.0, 40.0).focusable(true)
+                    .controls("pane").orientation(crate::Axis::Vertical).value_range(20.0, 10.0..=40.0))
+                .child(crate::el().key("stale").role("separator").size(6.0, 16.0).controls("missing"))
+                .child(crate::col().key("left").child(crate::el().key("dup").size(10.0, 10.0)))
+                .child(crate::col().key("right").child(crate::el().key("dup").size(10.0, 10.0)))
+                .child(crate::el().key("dup-owner").role("separator").size(6.0, 16.0).controls("dup"))
+                .child(crate::el().key("press-row").role("row").size(160.0, 24.0).on_press(|s: &mut Rel| s.presses += 1)
+                    .child(crate::el().key("cell-a").role("gridcell").size(70.0, 20.0).child(crate::text("Ada").font(style)))
+                    .child(crate::el().key("cell-b").role("gridcell").size(70.0, 20.0).child(crate::text("Open").font(style))))
+        }
+        let mut rt = Runtime::new(Rel { show_c: true, c_selected: false, edit: crate::TextEdit::new(""), presses: 0 }, view, (480.0, 400.0), Env::default());
+        rt.frame(0.0);
+        let path = |rt: &Runtime<Rel>, key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let items = rt.web_a11y_items();
+        fn at<'a>(items: &'a [A11yItem], p: &str) -> &'a A11yItem {
+            items.iter().find(|it| it.path == p).unwrap_or_else(|| panic!("no {p}"))
+        }
+        let (grid, c, a) = (path(&rt, "grid"), path(&rt, "c"), path(&rt, "a"));
+        assert_eq!(at(&items, &grid).activedescendant.as_deref(), Some(c.as_str()));
+        let info = rt.elements();
+        let cursor = info.iter().find(|e| e.key.as_deref() == Some("c")).unwrap();
+        let selected = info.iter().find(|e| e.key.as_deref() == Some("a")).unwrap();
+        assert!(cursor.item_cursor && !cursor.item_selected);
+        assert!(selected.item_selected && !selected.item_cursor);
+        rt.update(|s, _| s.show_c = false);
+        rt.frame(0.0);
+        let hidden = rt.web_a11y_items();
+        assert!(at(&hidden, &path(&rt, "grid")).activedescendant.is_none());
+        rt.update(|s, _| { s.show_c = true; s.c_selected = true; });
+        rt.frame(0.0);
+        let search = path(&rt, "search");
+        rt.set_focus(Some(search.clone()), true);
+        let focused = rt.web_a11y_items();
+        let editor = at(&focused, &search);
+        assert_eq!(editor.kind, "combobox");
+        assert_eq!(editor.expanded, Some(true));
+        assert_eq!(editor.controls.as_deref(), Some(path(&rt, "hits").as_str()));
+        assert!(editor.edit.as_ref().is_some_and(|e| e.single));
+        assert!(!focused.iter().any(|it| it.path == path(&rt, "search-shell")));
+        assert_eq!(editor.activedescendant.as_deref(), Some(path(&rt, "opt-c").as_str()));
+        assert!(at(&focused, &path(&rt, "other")).activedescendant.is_none());
+        assert!(at(&focused, &path(&rt, "other")).controls.is_none());
+        let grip = at(&focused, &path(&rt, "grip"));
+        assert_eq!(grip.controls.as_deref(), Some(path(&rt, "pane").as_str()));
+        assert_eq!(grip.orientation, Some(crate::Axis::Vertical));
+        assert!(focused.iter().any(|it| it.path == path(&rt, "pane")));
+        assert!(at(&focused, &path(&rt, "stale")).controls.is_none());
+        assert!(at(&focused, &path(&rt, "dup-owner")).controls.is_none());
+        let row = at(&focused, &path(&rt, "press-row"));
+        assert!(row.pressable && row.tab.is_none() && row.text.is_empty());
+        assert!(focused.iter().any(|it| it.path == path(&rt, "cell-a") && it.parent.as_deref() == Some(row.path.as_str())));
+        assert!(rt.web_a11y_action(&json!({"kind": "a11y_press", "path": row.path})));
+        assert!(!rt.web_a11y_action(&json!({"kind": "a11y_focus", "path": row.path})));
+        rt.frame(0.0);
+        assert_eq!(rt.state.presses, 1);
+        let _ = (a, c);
     }
 }

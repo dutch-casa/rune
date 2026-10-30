@@ -138,10 +138,12 @@ impl Select {
     }
 
     pub fn build(mut self, k: &Kit, layer: &mut Vec<El>) -> El {
-        let trigger = self.field(k);
+        let list_key = format!("{}-listbox", self.key);
+        let mut trigger = self.field(k);
         if self.state == State::Disabled || !self.open {
             return trigger;
         }
+        trigger = trigger.controls(list_key.clone());
         let c = &k.c;
         let anchor_key = format!("{}-trigger", self.key);
         let modal = mount_dismiss(self.dismiss, layer);
@@ -203,7 +205,7 @@ impl Select {
                 .max_w(368.0)
                 .radius(6.0)
                 .fill(c.layer_01)
-                .child(col().key("listbox").role("listbox").focus_group().max_h(192.0).min_h(0.0).shrink().child(fit_scroll(list))),
+                .child(col().key(list_key).role("listbox").focus_group().max_h(192.0).min_h(0.0).shrink().child(fit_scroll(list))),
             &k.elevation.floating,
         );
         if let Some(modal) = modal {
@@ -281,6 +283,9 @@ impl Select {
                 t
             }
         };
+        if self.invalid && !disabled {
+            trigger = trigger.invalid(true);
+        }
         if disabled {
             return trigger.dim(0.5);
         }

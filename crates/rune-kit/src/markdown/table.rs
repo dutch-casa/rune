@@ -224,18 +224,18 @@ impl Renderer {
             (None, Some(outline)) => (Some(outline), None, 0.5),
             (None, None) => (None, None, 0.0),
         };
-        let mut frame = col().w_full().padding(inset);
+        let mut frame = col().role("table").w_full().padding(inset);
         if !s.table_full_width {
             frame = frame.max_w(total + 2.0 * inset);
         }
         if let Some(fill) = fill {
             frame = frame.radius(6.0).fill(fill);
         }
-        let head = self.table_row(&t.head, head_maps, t, &cols, self.head_font(), s.table_head_text, self.head_pad()).key("th");
-        let rule = |key: String| el().key(key).w_full().h(0.5).fill(s.table_rule);
+        let head = self.table_row(true, &t.head, head_maps, t, &cols, self.head_font(), s.table_head_text, self.head_pad()).key("th");
+        let rule = |key: String| el().key(key).role("none").w_full().h(0.5).fill(s.table_rule);
         let row_at = |i: usize, cells: &[Inline]| {
             let rmap = row_maps.get(i).map_or(&[][..], Vec::as_slice);
-            self.table_row(cells, rmap, t, &cols, self.body_font(), s.text, s.table_pad).key(format!("r{i}"))
+            self.table_row(false, cells, rmap, t, &cols, self.body_font(), s.text, s.table_pad).key(format!("r{i}"))
         };
         if let Some(body) = &s.table_body {
             // The frame doesn't clip, so the card's shadow shows past it; the header row and
@@ -252,14 +252,14 @@ impl Renderer {
             };
             frame = frame.child(head);
             if !t.rows.is_empty() {
-                let mut rows = col().key("tbc").w_full().clip_rounded(body.radius);
+                let mut rows = col().key("tbc").role("none").w_full().clip_rounded(body.radius);
                 for (i, cells) in t.rows.iter().enumerate() {
                     if i > 0 {
                         rows = rows.child(rule(format!("s{i}")));
                     }
                     rows = rows.child(row_at(i, cells));
                 }
-                let card = col().key("tb").w_full().radius(body.radius).fill(body.fill);
+                let card = col().key("tb").role("none").w_full().radius(body.radius).fill(body.fill);
                 frame = frame.child(body.shadows.iter().fold(card, |c, sh| c.box_shadow(*sh)).child(rows));
             }
         } else {
@@ -300,10 +300,11 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn table_row(&self, cells: &[Inline], maps: &[SpanMap], t: &Table, cols: &Columns, font: TextStyle, color: Color, [pad_x, pad_y]: [f32; 2]) -> El {
+    fn table_row(&self, header: bool, cells: &[Inline], maps: &[SpanMap], t: &Table, cols: &Columns, font: TextStyle, color: Color, [pad_x, pad_y]: [f32; 2]) -> El {
         let empty = Inline::default();
         let total: f32 = cols.natural.iter().sum();
-        let mut r = row().w_full();
+        let cell_role = if header { "columnheader" } else { "cell" };
+        let mut r = row().role("row").w_full();
         for (j, (natural, min)) in cols.natural.iter().zip(&cols.min).enumerate() {
             let inl = cells.get(j).unwrap_or(&empty);
             let align = t.align.get(j).copied().unwrap_or_default();
@@ -316,7 +317,7 @@ impl Renderer {
             // Full width: each column's share of the row is its share of the natural width, so
             // a wider row widens columns in proportion and a narrower one shrinks them as
             // without it. A table that scrolls never shrinks a column below its content.
-            let cell = col().key(format!("c{j}"));
+            let cell = col().key(format!("c{j}")).role(cell_role);
             let cell = match (self.s.table_full_width && total > 0.0, self.scroll_wide) {
                 (false, _) => cell.w(*natural).shrink().min_w(*min),
                 (true, false) => cell.w_frac(natural / total).shrink().min_w(*min),

@@ -367,3 +367,41 @@ fn key_handler_removals_fade_by_default_and_unmount_at_once_with_tx_instant() {
         "banner is gone in the commit frame"
     );
 }
+
+#[test]
+fn unmodified_escape_reaches_an_ancestor_before_the_editor_blurs() {
+    struct S { dismissed: u32, edit: TextEdit }
+    fn view(s: &S, _: &mut Cx<S>) -> El {
+        col().key("pop").size(220.0, 80.0).on_key(|s: &mut S, ev, tx| {
+            if ev.key != Key::Escape || ev.mods != Mods::default() || tx.key_repeat() { return false; }
+            s.dismissed += 1;
+            true
+        }).child(text_input(&s.edit, TextStyle::new(14.0, 400.0)).single_line().key("field").size(160.0, 24.0).on_edit(|s: &mut S| &mut s.edit))
+    }
+    let mut edit = TextEdit::new("hi");
+    edit.focused = true;
+    let mut rt = Runtime::new(S { dismissed: 0, edit }, view, (240.0, 100.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt.ime(crate::Ime::Preedit("ka".into(), None));
+    rt.frame(0.0);
+    rt.key(KeyEvent { key: Key::Escape, mods: Mods::default() });
+    rt.frame(0.0);
+    assert_eq!(rt.state.dismissed, 0, "a composition owns Escape");
+    assert!(rt.state.edit.focused);
+    rt.ime(crate::Ime::Commit("ka".into()));
+    rt.frame(0.0);
+    rt.key(KeyEvent { key: Key::Escape, mods: Mods { shift: true, ..Mods::default() } });
+    rt.frame(0.0);
+    assert_eq!(rt.state.dismissed, 0, "a modified Escape does not dismiss");
+    assert!(!rt.state.edit.focused, "modified Escape still blurs the field");
+    rt.update(|s, _| s.edit.focused = true);
+    rt.frame(0.0);
+    rt.key(KeyEvent { key: Key::Text("x".into()), mods: Mods::default() });
+    rt.frame(0.0);
+    assert!(rt.state.edit.text.contains('x'));
+    assert_eq!(rt.state.dismissed, 0);
+    rt.key(KeyEvent { key: Key::Escape, mods: Mods::default() });
+    rt.frame(0.0);
+    assert_eq!(rt.state.dismissed, 1);
+    assert!(rt.state.edit.focused, "the ancestor took unmodified Escape before blur");
+}

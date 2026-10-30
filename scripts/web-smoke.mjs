@@ -4,13 +4,15 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import { inputSmoke } from './web-input-smoke.mjs';
+import { accessibilityProof } from './web-accessibility.mjs';
 const { chromium, webkit } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const engine = process.env.WEB_ENGINE || 'chromium';
 const root = resolve(process.argv[2] || 'target/web');
 const output = resolve(process.argv[3] || 'target/web-proof');
 await mkdir(output, { recursive: true });
 const server = createServer(async (request, response) => {
-    const path = resolve(root, '.' + new URL(request.url, 'http://localhost').pathname.replace(/\/$/, '/index.html'));
+    const pathname = new URL(request.url, 'http://localhost').pathname;
+    const path = resolve(root, '.' + (pathname.endsWith('/') ? `${pathname}index.html` : pathname));
     if (!path.startsWith(root + sep)) { response.writeHead(403).end(); return; }
     try {
         const bytes = await readFile(path);
@@ -44,6 +46,11 @@ try {
             await locator.evaluate(element => element.removeAttribute('data-proof-ax'));
         }
     };
+    const tapControl = async locator => {
+        const box = await locator.boundingBox();
+        assert.ok(box, 'the rendered control needs bounds');
+        await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+    };
     await page.addInitScript(() => {
         // Chromium's device emulation leaves devicePixelContentBoxSize at the host DPR.
         // Exercise winit's Safari fallback (CSS content box × emulated DPR) instead.
@@ -75,13 +82,17 @@ try {
     const send = page.getByRole('button', { name: 'Send', exact: true });
     await send.waitFor();
     assert.equal(await send.count(), 1);
+    assert.equal(await send.getAttribute('tabindex'), '0');
+    assert.equal(await page.getByRole('button', { name: 'Copy last', exact: true }).getAttribute('tabindex'), '0');
+    assert.equal(await page.getByRole('heading', { name: 'Messages', level: 1 }).count(), 1);
     if (ax) {
         assert.equal((await axNode(mirror)).role.value, 'document');
         assert.equal((await axNode(send)).name.value, 'Send');
         assert.equal((await axNode(canvas)).ignored, true);
     }
     await page.waitForTimeout(1000); // Let the initial appearance finish before measuring idle.
-    assert.deepEqual(await page.locator('canvas').evaluate(c => [c.width, c.height]), [1170, 2280]);
+    assert.equal(await canvas.evaluate(c => c.width === Math.round(c.getBoundingClientRect().width * devicePixelRatio)
+        && c.height === Math.round(c.getBoundingClientRect().height * devicePixelRatio)), true);
     const beforeIdle = await page.evaluate(() => window.__proof.submits);
     const beforeIdleRaf = await page.evaluate(() => window.__proof.rafs);
     await page.waitForTimeout(600);
@@ -111,7 +122,7 @@ try {
     assert.equal(await page.locator('textarea').inputValue(), 'Bonjour 🦀');
     await page.keyboard.press('Enter');
     assert.equal(await page.locator('textarea').inputValue(), '');
-    await page.touchscreen.tap(330, 36);
+    await tapControl(page.getByRole('button', { name: 'Copy last', exact: true }));
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'Bonjour 🦀', 'send updates the actual model');
     await page.touchscreen.tap(100, 720);
     await page.keyboard.insertText('x'.repeat(1200) + ' tail');
@@ -122,7 +133,7 @@ try {
         field.dispatchEvent(new InputEvent('input', { inputType: 'insertReplacementText', data: 'corrected' }));
     });
     await page.keyboard.press('Enter');
-    await page.touchscreen.tap(330, 36);
+    await tapControl(page.getByRole('button', { name: 'Copy last', exact: true }));
     assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'x'.repeat(1200) + ' corrected');
     await page.touchscreen.tap(100, 720);
     const beforeMissingGlyph = await page.evaluate(() => window.__proof.submits);
@@ -145,7 +156,7 @@ try {
     });
     assert.equal(await page.locator('textarea').inputValue(), 'replacement pasted');
     const popup = context.waitForEvent('page');
-    await page.touchscreen.tap(90, 36);
+    await tapControl(page.getByRole('link', { name: 'Rust website', exact: true }));
     const linked = await popup;
     await linked.waitForLoadState('domcontentloaded');
     assert.ok(linked.url().includes('rust-lang.org'));
@@ -153,7 +164,11 @@ try {
     await linked.close();
     await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 430, height: 540 });
-    await page.waitForFunction(() => document.querySelector('canvas')?.height === 1620);
+    await page.waitForFunction(() => {
+        const canvas = document.querySelector('canvas');
+        return canvas?.width === Math.round(canvas.getBoundingClientRect().width * devicePixelRatio)
+            && canvas.height === Math.round(canvas.getBoundingClientRect().height * devicePixelRatio);
+    });
     await page.waitForTimeout(400);
     await page.screenshot({ path: `${output}/web-light-keyboard-size.png` });
     const gpuErrors = await page.evaluate(() => window.__proof.gpuErrors);
@@ -196,6 +211,15 @@ try {
         return relation.id;
     };
     await captionFor(select, 'Fruit');
+    await select.focus();
+    await page.keyboard.press('Enter');
+    const selectedOption = page.getByRole('option', { name: 'Banana', exact: true });
+    await selectedOption.waitFor();
+    if (ax) assert.equal((await axNode(selectedOption)).name.value, 'Banana');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('Enter');
+    await select.waitFor();
+    assert.equal(await select.textContent(), 'Cherry');
     const captionId = await captionFor(editor, 'Captioned editor');
     const editorId = await editor.getAttribute('id');
     await editor.evaluate(element => { window.__captionEditor = element; });
@@ -214,7 +238,7 @@ try {
     if (ax) {
         const selectAx = await axNode(select);
         assert.equal(selectAx.name.value, 'Fruit');
-        assert.equal(selectAx.value.value, 'Banana');
+        assert.equal(selectAx.value.value, 'Cherry');
         assert.equal((await axNode(editor)).name.value, 'Captioned editor');
         assert.equal((await axNode(visibleCheck)).name.value, 'Visible checkbox');
         assert.equal((await axNode(hiddenCheck)).name.value, 'Hidden checkbox');
@@ -326,6 +350,7 @@ try {
         canvas.remove();
         delete window.__parkedProbe;
     });
+    await accessibilityProof(page, url, ax ? axNode : null);
     console.log(JSON.stringify({ accessibility: 'passed', checks: ['caption references and lifecycle', 'explicit names',
         'multi-editor groups', 'native link Tab order', 'option and tab content names', 'named pressable', 'native pinch zoom'] }));
     assert.deepEqual(await page.evaluate(() => window.__proof.gpuErrors), []);

@@ -244,6 +244,7 @@ impl<S: 'static> PopupList<S> {
                 .role("option")
                 .label(&option.label)
                 .focus_selected(is_active)
+                .focus_cursor(is_active)
                 .w_full()
                 .h(28.0)
                 .px(8.0)
@@ -285,7 +286,7 @@ impl<S: 'static> PopupList<S> {
         // between them as the search edits it instead of swapping one box for the other.
         let empty = self.items.is_empty();
         let mut viewport = col()
-            .key("viewport")
+            .key(format!("{}-listbox", self.key))
             .role("listbox")
             .w_full()
             .h((self.items.len() as f32 * 28.0).min(self.max_height))
