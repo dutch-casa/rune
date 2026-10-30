@@ -374,6 +374,8 @@ fn flatten_owned(
     }
     let text_meta = prepare_text(&mut text, input.as_deref(), scale);
     let inert = inert || parent.is_some_and(|p| nodes[p].inert);
+    let mut a11y = a11y;
+    a11y.disabled |= parent.is_some_and(|p| nodes[p].a11y.disabled);
     inherit_hover_within(&mut vis, above.as_ref(), parent, nodes);
     let pixel_aspect = vis.pixels.as_ref()
         .filter(|_| style.aspect_ratio.is_none() && style.size.width.is_auto() != style.size.height.is_auto())

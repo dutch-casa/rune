@@ -130,6 +130,7 @@ impl Acts {
         self.0.push(Box::new(move |e: El| e.on_press_tx(f)));
     }
     pub(crate) fn apply(self, mut e: El, enabled: bool) -> El {
+        e = e.disabled(!enabled);
         if enabled {
             for f in self.0 {
                 e = f(e);

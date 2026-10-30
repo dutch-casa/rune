@@ -201,7 +201,7 @@ pub struct Button {
     size: Size,
     icon: Option<&'static Icon>,
     state: State,
-    expanded: bool,
+    expanded: Option<bool>,
     help: Option<String>,
     shortcut: Option<String>,
     acts: Acts,
@@ -216,7 +216,7 @@ impl Button {
             size: Size::Control(ControlSize::Regular),
             icon: None,
             state: State::Rest,
-            expanded: false,
+            expanded: None,
             help: None,
             shortcut: None,
             acts: Acts::default(),
@@ -275,7 +275,7 @@ impl Button {
     }
     /// The trigger of an open menu or popover (`data-expanded`): ghost variants hold the pressed fill.
     pub fn expanded(mut self, on: bool) -> Self {
-        self.expanded = on;
+        self.expanded = Some(on);
         self
     }
     /// Tooltip text shown after the hover delay (`El::help`).
@@ -313,7 +313,7 @@ impl Button {
         let mut s = skin(k, self.variant);
         let ghostly =
             matches!(self.variant, ButtonVariant::Ghost | ButtonVariant::GhostMuted | ButtonVariant::GhostFaint);
-        if self.expanded && ghostly && self.state != State::Disabled {
+        if self.expanded == Some(true) && ghostly && self.state != State::Disabled {
             s.fill = s.pressed;
             if self.variant == ButtonVariant::GhostMuted {
                 (s.ink, s.icon) = (k.c.text_base, k.c.icon_base);
@@ -336,6 +336,9 @@ impl Button {
         let enabled = self.state != State::Disabled && interactive;
         let tip = compose_help(self.help.as_deref(), Some(&self.label), self.shortcut.as_deref());
         let mut e = row().role("button").label(self.label.clone()).h(h).px(px).gap(gap).center().radius(radius);
+        if let Some(expanded) = self.expanded {
+            e = e.expanded(expanded);
+        }
         if let Some(t) = tip {
             e = e.help(t);
         }
@@ -374,7 +377,7 @@ pub struct IconButton {
     variant: IconButtonVariant,
     size: Size,
     state: State,
-    expanded: bool,
+    expanded: Option<bool>,
     label: Option<String>,
     help: Option<String>,
     shortcut: Option<String>,
@@ -388,7 +391,7 @@ impl IconButton {
             variant: IconButtonVariant::Neutral,
             size: Size::Control(ControlSize::Regular),
             state: State::Rest,
-            expanded: false,
+            expanded: None,
             label: None,
             help: None,
             shortcut: None,
@@ -421,7 +424,7 @@ impl IconButton {
         self
     }
     pub fn expanded(mut self, on: bool) -> Self {
-        self.expanded = on;
+        self.expanded = Some(on);
         self
     }
     /// Accessible name (the web's `aria-label`).
@@ -484,7 +487,7 @@ impl IconButton {
         if self.state == State::Pressed && self.variant == IconButtonVariant::GhostMuted {
             s.icon = k.c.icon_base;
         }
-        if self.expanded && matches!(self.variant, IconButtonVariant::Ghost | IconButtonVariant::GhostMuted) {
+        if self.expanded == Some(true) && matches!(self.variant, IconButtonVariant::Ghost | IconButtonVariant::GhostMuted) {
             s.fill = s.pressed;
             s.icon = if self.variant == IconButtonVariant::GhostMuted { k.c.icon_base } else { s.icon };
         }
@@ -493,6 +496,9 @@ impl IconButton {
         let enabled = self.state != State::Disabled;
         let tip = compose_help(self.help.as_deref(), self.label.as_deref(), self.shortcut.as_deref());
         let mut e = row().role("button").size(side, side).center().radius(radius);
+        if let Some(expanded) = self.expanded {
+            e = e.expanded(expanded);
+        }
         if let Some(l) = self.label.or(self.help) {
             e = e.label(l);
         }

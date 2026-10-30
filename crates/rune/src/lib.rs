@@ -96,6 +96,7 @@ pub mod color;
 pub mod compose;
 pub mod edit;
 pub mod el;
+mod el_a11y;
 mod el_anchor;
 mod el_backdrop;
 mod el_child_exit;
