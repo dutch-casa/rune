@@ -75,13 +75,15 @@ const BATCHED_KINDS: u32 = 1 << KIND_GLYPH as u32 | 1 << KIND_IMAGE as u32 | 1 <
 /// Instances `write_instances` compares at once.
 const BLOCK: usize = 64;
 
-/// Whether two equally long instance lists hold the same bytes. Folds over words into one
-/// accumulator per word of an instance, which vectorizes, at about half the cost of a `memcmp`.
+/// Whether two equally long instance lists hold the same bytes. Folds over `u32` words into one
+/// accumulator per word of an instance. `Instance` is only 4-aligned, so a `u64` view may not be.
 fn same(a: &[Instance], b: &[Instance]) -> bool {
-    let words = |l| bytemuck::cast_slice::<Instance, [u64; 16]>(l);
-    let mut acc = [0u64; 16];
+    const _: () = assert!(std::mem::size_of::<Instance>() == std::mem::size_of::<[u32; 32]>());
+    const _: () = assert!(std::mem::align_of::<[u32; 32]>() <= std::mem::align_of::<Instance>());
+    let words = |l| bytemuck::cast_slice::<Instance, [u32; 32]>(l);
+    let mut acc = [0u32; 32];
     for (x, y) in words(a).iter().zip(words(b)) {
-        for j in 0..16 { acc[j] |= x[j] ^ y[j]; }
+        for j in 0..32 { acc[j] |= x[j] ^ y[j]; }
     }
     acc.iter().fold(0, |s, w| s | w) == 0
 }

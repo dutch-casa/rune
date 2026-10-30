@@ -276,6 +276,35 @@ fn same_finds_one_changed_bit_in_any_word() {
     }
 }
 
+/// `write_instances` compares caller slices that are only 4-aligned. An 8-aligned `u32` store's
+/// second word is 4 mod 8; `same` must accept that view and compare bytes, not `f32` equality.
+#[test]
+fn same_compares_bytes_of_a_four_mod_eight_slice() {
+    #[repr(align(8))]
+    struct Words([u32; 65]);
+    fn view(words: &Words, n: usize) -> &[Instance] {
+        let at = &words.0[1..1 + n * 32];
+        assert_eq!(at.as_ptr() as usize % 8, 4);
+        bytemuck::cast_slice::<u32, Instance>(at)
+    }
+    assert_eq!((align_of::<Instance>(), size_of::<Instance>()), (4, 128));
+    let mut a = Words([0; 65]);
+    let mut b = Words([0; 65]);
+    assert!(same(view(&a, 0), view(&b, 0)));
+    // Quiet NaN and -0. `f32` equality would reject the NaN and accept +0.
+    a.0[1] = 0x7fc0_0000;
+    a.0[2] = 0x8000_0000;
+    (b.0[1], b.0[2]) = (a.0[1], a.0[2]);
+    let left = view(&a, 1);
+    assert!(left[0].rect[0].is_nan() && left[0].rect[1].is_sign_negative());
+    assert!(same(left, view(&b, 1)));
+    b.0[1] = 0x7fc0_0001;
+    assert!(!same(left, view(&b, 1)), "NaN payload");
+    b.0[1] = a.0[1];
+    b.0[2] = 0;
+    assert!(!same(left, view(&b, 1)), "signed zero");
+}
+
 /// Plain rects between images and glyphs keep the batch they're in; only image and glyph pages
 /// start one.
 #[test]
