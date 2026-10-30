@@ -18,8 +18,34 @@ Serve the entire output folder over HTTPS, including `snippets/`. A local HTTP s
 `localhost` also works for development. The host must serve `.wasm` as `application/wasm`.
 No application server, SharedArrayBuffer, COOP or COEP headers are required.
 `--opt` additionally runs an installed `wasm-opt -Oz`; the default build does not need it.
-The script prints the raw and gzip wasm sizes. Configure gzip or Brotli on the static host
-to get the corresponding transfer size.
+
+For production, install Binaryen (`wasm-opt`) and the Brotli CLI, then export:
+
+```sh
+scripts/web-build.sh web-hello --out target/web --opt \
+  --title "Messages" --description "A Rune message list with an editable composer."
+```
+
+The title and description are HTML-escaped. The runtime then sets the document title
+from `AppSpec::title`. Supply a description that describes your application.
+The generated page preloads its wasm without waiting for the JavaScript import chain.
+It declares an empty favicon; replace that link when you supply an application icon.
+
+Every export regenerates deterministic `.gz` files for HTML, JavaScript, wasm and other
+text assets, including `snippets/`. If the Brotli CLI is available, it also generates
+`.br` files at quality 9, or quality 11 with `--opt`. The extra compression runs at
+build time, not per request. Without Brotli, gzip remains available. The script prints
+the actual encoded wasm sizes. Old compressed variants are removed before regeneration.
+
+Configure the host to negotiate these files from `Accept-Encoding`, set the matching
+`Content-Encoding`, and return `Vary: Accept-Encoding`. Preserve the original asset's
+MIME type, especially `application/wasm`. Keep the uncompressed files for clients that
+do not accept a supported encoding. A plain development file server does not perform
+this negotiation. Deploy the complete export together so assets and variants match.
+
+Lighthouse scores depend on the page, browser and throttling settings. Its paint metrics
+do not reliably represent WebGPU canvas presentation. Check the rendered application
+and interaction latency separately.
 
 The example is a scrollable message list with a composer, Send and Copy last. Its title
 opens an external link. Refreshing resets the in-memory messages.
