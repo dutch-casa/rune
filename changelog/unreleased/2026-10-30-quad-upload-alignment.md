@@ -1,0 +1,1 @@
+- Compare quad uploads with four-byte words. Valid four-byte-aligned buffers no longer panic; bitwise changes still trigger uploads.
