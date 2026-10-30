@@ -20,7 +20,7 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
         .child(crate::text_input(&s.secret, crate::tok::type_::BODY).key("secret").label("Password").size(200.0, 48.0)
             .on_edit(|s: &mut State| &mut s.secret))
         .child(crate::text_input(&s.draft, crate::tok::type_::BODY).key("readonly").label("Read-only draft").size(200.0, 48.0))
-        .child(crate::el().key("mixed").role("checkbox").label("Include descendants").checked(None).size(32.0, 32.0));
+        .child(crate::el().key("mixed").role("checkbox").label("Include descendants").indeterminate(true).size(32.0, 32.0));
     if s.present {
         let group = crate::col();
         root = root.child((if s.inert { group.inert() } else { group }).child(button()));
@@ -215,4 +215,60 @@ fn readonly_projection_cannot_request_its_models_editable_focus() {
     rt.frame(0.0);
     assert_eq!(rt.focused.as_deref(), Some(key.as_str()));
     assert_eq!(packet(&mut mirror, &rt)["focus"], id);
+}
+
+#[test]
+fn inline_prose_is_exposed_once_in_source_order_with_stable_link_identity() {
+    for content in ["", "é🦀!"] {
+        let mut rt = Runtime::new(content, |s, _| {
+            crate::text(*s).link(crate::Link::new(2..6, "crab")).link(crate::Link::new(0..2, "accent"))
+        }, (300.0, 200.0), Env::default());
+        rt.frame(0.0);
+        let tree: Value = serde_json::from_str(Mirror::default().sync(&rt, false).unwrap()).unwrap();
+        let nodes = tree["nodes"].as_array().unwrap();
+        let text: String = nodes.iter().flat_map(|n| [n["text"].as_str().unwrap_or(""), n["after"].as_str().unwrap_or("")]).collect();
+        assert_eq!(text, content);
+        if !content.is_empty() {
+            let links: Vec<_> = nodes.iter().filter(|n| n["role"] == "link").collect();
+            assert_eq!(links[0]["text"], "é");
+            assert_eq!(links[1]["text"], "🦀");
+            assert!(links[0]["id"].as_str().unwrap().ends_with("#link-1"));
+            assert!(links[1]["id"].as_str().unwrap().ends_with("#link-0"));
+            assert_eq!(links[1]["after"], "!");
+        }
+    }
+}
+
+#[test]
+fn empty_shell_names_do_not_mask_editor_names_or_browser_fallbacks() {
+    let mut rt = Runtime::new(crate::TextEdit::new("value"), |s, _| crate::col()
+        .child(crate::col().role("textbox").fallback_label("")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("unnamed")))
+        .child(crate::col().role("textbox").label("Field name")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("field").fallback_label("")))
+        .child(crate::col().role("textbox").label("Group name")
+            .child(crate::text_input(s, crate::tok::type_::BODY).key("explicit").label("Control name"))),
+        (300.0, 200.0), Env::default());
+    rt.frame(0.0);
+    let tree: Value = serde_json::from_str(Mirror::default().sync(&rt, false).unwrap()).unwrap();
+    let editors: Vec<_> = tree["nodes"].as_array().unwrap().iter().filter(|n| n["edit"].is_object()).collect();
+    assert_eq!(editors[0]["label"], Value::Null);
+    assert_eq!(editors[1]["label"], "Field name");
+    assert_eq!(editors[2]["label"], "Control name");
+}
+
+#[test]
+fn clearing_indeterminate_restores_the_binary_state_in_browser_controls() {
+    let mut rt = Runtime::new((true, true), |s: &(bool, bool), _| crate::col()
+        .child(crate::el().role("checkbox").label("First").checked(s.0).indeterminate(s.1))
+        .child(crate::el().role("checkbox").label("Second").indeterminate(s.1).checked(s.0)),
+        (300.0, 200.0), Env::default());
+    let mut mirror = Mirror::default();
+    for (checked, indeterminate, expected) in [(true, true, "mixed"), (true, false, "true"), (false, false, "false"), (false, true, "mixed")] {
+        rt.update(|s, _| *s = (checked, indeterminate));
+        rt.frame(0.0);
+        let tree: Value = serde_json::from_str(mirror.sync(&rt, false).unwrap()).unwrap();
+        assert_eq!(node(&tree, "First")["checked"], expected);
+        assert_eq!(node(&tree, "Second")["checked"], expected);
+    }
 }

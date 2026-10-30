@@ -83,7 +83,7 @@ impl<S: 'static> Runtime<S> {
     }
     pub(super) fn can_focus(&self, i: usize) -> bool {
         let n = &self.nodes[i];
-        (n.focus.enabled || n.input.as_ref().is_some_and(|s| s.access.is_some())) && self.reachable(i)
+        (n.focus.enabled || n.input.is_some()) && self.reachable(i)
     }
     /// Shown, sized, not exiting and not behind a modal.
     fn reachable(&self, i: usize) -> bool {
@@ -198,7 +198,7 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn sync_requested_focus(&mut self, nodes: &mut Vec<Node>) -> bool {
         for old in &self.nodes {
             if let Some(input) = &old.input
-                && input.edit.focused
+                && input.access.is_some() && input.edit.focused
                 && !nodes.iter().any(|n| n.path == old.path || n.input.as_ref().is_some_and(|i| i.edit.same_model(&input.edit)))
                 && !self.virtual_inputs.values().any(|i| i.edit.same_model(&input.edit))
                 && !self.unmounted_focused.iter().any(|w| input.edit.matches_history(w))
@@ -211,7 +211,7 @@ impl<S: 'static> Runtime<S> {
         };
         let shown = |idx: usize| {
             let n = &nodes[idx];
-            !n.inert && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
+            !n.inert && !n.a11y.disabled && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
                 && std::iter::successors(n.parent, |&p| nodes[p].parent).all(|p| nodes[p].vis.opacity > 0.0)
         };
         let restore = self.nodes.iter().enumerate().rev().find_map(|(i, old)| {
@@ -228,25 +228,25 @@ impl<S: 'static> Runtime<S> {
             if !within(focused, scope) { return None; }
             let anchor = nodes.iter().find(|n| n.key.as_deref() == Some(key))?;
             let candidates = (0..nodes.len()).filter(|&j| within(&nodes[j].path, &anchor.path) && shown(j)
-                && (nodes[j].focus.enabled || nodes[j].input.as_ref().is_some_and(|i| i.access.is_some())));
+                && (nodes[j].focus.enabled || nodes[j].input.is_some()));
             candidates.clone().find(|&j| nodes[j].focus.selected)
                 .or_else(|| candidates.into_iter().next())
                 .map(|j| nodes[j].path.clone())
         });
         let input_focused = self.focused.as_deref().is_some_and(|p| {
-            nodes.iter().any(|n| n.path == p && !n.inert && n.input.as_ref().is_some_and(|i| i.edit.focused))
+            nodes.iter().any(|n| n.path == p && !n.inert && !n.a11y.disabled && n.input.as_ref().is_some_and(|i| i.access.is_some() && i.edit.focused))
                 || self.virtual_inputs.get(p).is_some_and(|i| i.edit.focused)
         });
         let was_focused = |edit: &crate::edit::TextEdit, path: &str| {
             self.nodes.iter().any(|old| {
-                old.input.as_ref().is_some_and(|i| i.edit.focused && (old.path == path || i.edit.same_model(edit)))
+                old.input.as_ref().is_some_and(|i| i.access.is_some() && i.edit.focused && (old.path == path || i.edit.same_model(edit)))
             }) || (input_focused && self.unmounted_focused.iter().any(|w| edit.matches_history(w)))
         };
         let virtual_req = || self.virtual_inputs.iter()
             .filter(|(_, i)| i.access.is_some() && i.edit.focused)
             .map(|(p, i)| (p.as_str(), &i.edit));
-        // A newly requested text field wins; a focused control otherwise retains focus. Nothing
-        // inside an `El::inert` subtree takes or keeps it.
+        // A newly requested text field wins; a focused control otherwise retains focus. Inert
+        // or disabled subtrees cannot take or keep it.
         let requested = (0..nodes.len())
             .filter(|&j| shown(j) && nodes[j].input.as_ref().is_some_and(|i| i.access.is_some() && i.edit.focused))
             .map(|j| (nodes[j].path.as_str(), &nodes[j].input.as_ref().unwrap().edit));
@@ -260,7 +260,7 @@ impl<S: 'static> Runtime<S> {
             .map(|(p, _)| p.to_owned())
             .or(restore)
             .or_else(|| self.focused.clone().filter(|p| (0..nodes.len()).any(|j| &nodes[j].path == p && shown(j)
-                && (nodes[j].focus.enabled || nodes[j].input.as_ref().is_some_and(|i| i.edit.focused)))
+                && (nodes[j].focus.enabled || nodes[j].input.as_ref().is_some_and(|i| i.access.is_none() || i.edit.focused)))
                 || self.virtual_inputs.get(p).is_some_and(|i| i.edit.focused)))
             .or_else(|| requested.into_iter().next().or_else(|| virtual_req().min_by_key(|&(p, _)| p)).map(|(p, _)| p.to_owned()));
         // State may have deleted a row. Only the new view's accessors are valid now.
@@ -269,7 +269,7 @@ impl<S: 'static> Runtime<S> {
         std::mem::swap(&mut self.nodes, nodes);
         let changed = self.set_focus(next, self.keyboard_focus);
         std::mem::swap(&mut self.nodes, nodes);
-        if self.input_click.dragging_path().is_some_and(|p| !nodes.iter().any(|n| n.path == p && !n.inert && n.input.is_some())) {
+        if self.input_click.dragging_path().is_some_and(|p| !nodes.iter().any(|n| n.path == p && !n.inert && !n.a11y.disabled && n.input.is_some())) {
             self.input_click.drop_drag();
         }
         if self.capture.is_none() {

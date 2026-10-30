@@ -3161,7 +3161,7 @@ impl<S: 'static> Runtime<S> {
         let Some(access) = self.focused_input().map(|i| i.access.clone()) else { return self.app_ime.composing() };
         match access {
             Some(access) => access(states!(self)).preedit.is_some(),
-            None => self.focused_input().is_some_and(|i| i.edit.preedit.is_some()),
+            None => self.app_ime.composing(),
         }
     }
 
@@ -3183,7 +3183,23 @@ impl<S: 'static> Runtime<S> {
 
     fn focused_input(&self) -> Option<&InputSpec> {
         let path = self.focused.as_deref()?;
-        self.node(path).and_then(|n| n.input.as_deref()).or_else(|| self.virtual_inputs.get(path).map(Box::as_ref))
+        let mounted = self.nodes.iter().enumerate().find_map(|(i, n)| {
+            (n.path == path && !self.subtree_exiting(i) && !self.subtree_unmounted(i)).then_some(i)
+        });
+        let (owner, input) = if let Some(i) = mounted {
+            (i, self.nodes[i].input.as_deref()?)
+        } else {
+            // The focused row may be outside the virtual window. Its collected input carries
+            // disabled/inert admission from the unmounted part; its closest retained ancestor
+            // still owns modal scope and the retained subtree's admission.
+            let input = self.virtual_inputs.get(path).filter(|input| input.edit.focused)?;
+            let ancestor = self.nodes.iter().enumerate().filter(|(i, n)| {
+                path.strip_prefix(n.path.as_str()).is_some_and(|rest| rest.starts_with('/'))
+                    && !self.subtree_exiting(*i) && !self.subtree_unmounted(*i)
+            }).max_by_key(|(_, n)| n.path.len()).map(|(i, _)| i)?;
+            (ancestor, input.as_ref())
+        };
+        self.allowed(owner).then_some(input)
     }
 
     /// What [`Tx::focused`] reports: the focused link's id, else the focused element's key,

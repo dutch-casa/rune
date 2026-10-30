@@ -39,6 +39,7 @@ struct Semantic<'a> {
     role: &'static str,
     label: Option<&'a str>,
     text: Option<&'a str>,
+    after: Option<&'a str>,
     help: Option<&'a str>,
     tab: i32,
     focusable: bool,
@@ -127,10 +128,10 @@ impl<S: 'static> Runtime<S> {
         for i in (0..self.nodes.len()).rev() {
             if keep[i] && let Some(parent) = self.nodes[i].parent { keep[parent] = true; }
         }
-        let mut labels: Vec<_> = self.nodes.iter().map(|n| n.label.as_deref()).collect();
+        let mut labels: Vec<_> = self.nodes.iter().map(|n| n.label.as_deref().filter(|label| !label.is_empty())).collect();
         let owners = self.input_owners(|j| !hidden[j] && self.in_scope(j));
         for (i, n) in self.nodes.iter().enumerate() {
-            if n.input.is_none() && n.role == "textbox" && let Some(label) = n.label.as_deref()
+            if n.input.is_none() && n.role == "textbox" && let Some(label) = labels[i]
                 && let Some(editor) = owners[i]
             {
                 labels[editor] = labels[editor].or(Some(label));
@@ -151,26 +152,43 @@ impl<S: 'static> Runtime<S> {
             });
             let links = n.text.as_ref().is_some_and(|t| !t.links.is_empty());
             let shell = n.role == "textbox" && n.input.is_none();
+            let mut inline = Vec::new();
+            if links {
+                let visible = self.element_geometry(i).map_or([0.0; 4], |g| g.visible);
+                self.visit_link_elements(i, visible, |link| {
+                    if link.text.is_some() { inline.push(link); }
+                });
+                inline.sort_by_key(|link| n.text.as_ref().unwrap().links[link.index].start);
+            }
             nodes.push(Semantic {
                 id: Id(n.id.0, None), parent: n.parent.map(|p| Id(self.nodes[p].id.0, None)),
                 key: n.input.as_ref().map(|_| n.path.as_str()), role: if shell { "group" } else { n.role }, label: labels[i],
-                text: (!secure && n.input.is_none() && self.in_scope(i)).then(|| n.text.as_ref().map(|t| t.source_text())).flatten(),
+                text: (!secure && n.input.is_none() && self.in_scope(i)).then(|| n.text.as_ref().and_then(|t| {
+                    inline.first().map_or(Some(t.source_text()), |link| t.source_slice(0, t.links[link.index].start))
+                })).flatten(),
+                after: None,
                 help: n.help.as_deref().filter(|_| !n.help_cut || n.elided.is_some()),
                 tab: if tab.contains(&i) && !links { n.focus.order.max(0) } else { -1 },
                 focusable: !links && self.can_focus(i), press: self.allowed(i) && n.on_press.is_some(), disabled: n.a11y.disabled,
                 expanded: n.a11y.expanded,
-                checked: n.a11y.checked.map(|value| match value { Some(true) => "true", Some(false) => "false", None => "mixed" }),
+                checked: n.a11y.checked.map(|state| if state.indeterminate { "mixed" } else if state.checked { "true" } else { "false" }),
                 selected: n.focus.selected, level: n.a11y.level, modal: self.active_modal() == Some(i), edit,
             });
-            if links {
-                let visible = self.element_geometry(i).map_or([0.0; 4], |g| g.visible);
-                self.visit_link_elements(i, visible, |link| nodes.push(Semantic {
-                    id: Id(n.id.0, Some(link.index)), parent: Some(Id(n.id.0, None)), key: None,
-                    role: link.role, label: link.label, text: link.text, help: None,
-                    tab: if tab.contains(&i) { n.focus.order.max(0) } else { -1 },
-                    focusable: self.can_focus(i), press: self.allowed(i) && n.text.as_ref().is_some_and(|t| t.on_link.is_some()),
-                    disabled: n.a11y.disabled, expanded: None, checked: None, selected: false, level: None, modal: false, edit: None,
-                }));
+            if let Some(spec) = n.text.as_ref() {
+                let mut end = 0;
+                for (at, link) in inline.iter().enumerate() {
+                    let range = &spec.links[link.index];
+                    let start = end.max(range.start);
+                    end = end.max(range.end);
+                    let next = inline.get(at + 1).map_or(spec.content.len() as u32, |link| spec.links[link.index].start).max(end);
+                    nodes.push(Semantic {
+                        id: Id(n.id.0, Some(link.index)), parent: Some(Id(n.id.0, None)), key: None,
+                        role: link.role, label: link.label, text: spec.source_slice(start, end), after: spec.source_slice(end, next), help: None,
+                        tab: if tab.contains(&i) { n.focus.order.max(0) } else { -1 },
+                        focusable: self.can_focus(i), press: self.allowed(i) && spec.on_link.is_some(),
+                        disabled: n.a11y.disabled, expanded: None, checked: None, selected: false, level: None, modal: false, edit: None,
+                    });
+                }
             }
         }
         nodes
@@ -211,10 +229,6 @@ impl<S: 'static> Runtime<S> {
                 self.pending.scroll_to.push((None, path));
                 true
             }
-            Some("focus") if self.nodes[i].input.as_ref().is_some_and(|input| input.access.is_none()) => {
-                if self.set_focus(None, true) { self.dirty = true; }
-                true
-            }
             Some("activate") if self.nodes[i].on_press.is_some() => {
                 self.queue.push(Action::Press(path, crate::PointerButton::Primary)); true
             }
@@ -226,3 +240,7 @@ impl<S: 'static> Runtime<S> {
 #[cfg(test)]
 #[path = "accessibility/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "accessibility/focus_tests.rs"]
+mod focus_tests;

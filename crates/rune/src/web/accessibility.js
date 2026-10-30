@@ -93,7 +93,7 @@ function create(h, data) {
     element.style.cssText += ';position:fixed;box-sizing:border-box;margin:0;padding:0;border:0;pointer-events:none;resize:none;overflow:clip;';
     const text = document.createTextNode('');
     if (!editor) element.append(text);
-    return { element, editor, text, data, help: null };
+    return { element, editor, text, data, help: null, after: null };
 }
 
 function compatible(entry, data) {
@@ -127,10 +127,16 @@ function update(h, entry, data) {
     entry.data = data;
     const role = roles.has(data.role) ? data.role : null;
     attribute(element, 'role', editor || data.role === 'button' ? null : role);
-    const label = data.label ?? (editor ? data.edit.placeholder || 'Text input' : null);
+    const label = data.label || (editor ? data.edit.placeholder || 'Text input' : null);
     attribute(element, 'aria-label', role && !unnamed.has(role) ? label : null);
     const content = data.text ?? (data.role === 'text' ? data.label : '') ?? '';
     if (!editor && text.data !== content) text.data = content;
+    if (data.after !== null) {
+        entry.after ??= document.createTextNode('');
+        if (entry.after.data !== data.after) entry.after.data = data.after;
+    } else {
+        entry.after?.remove(); entry.after = null;
+    }
     if (data.focusable || data.press || editor || data.role === 'button') {
         attribute(element, 'tabindex', data.tab);
     } else attribute(element, 'tabindex', null);
@@ -209,7 +215,7 @@ export function syncAccessibility(h, json) {
             for (const data of packet.nodes) {
                 let entry = h.nodes.get(data.id);
                 if (entry && !compatible(entry, data)) {
-                    entry.editor?.destroy(); entry.help?.remove(); entry.element.remove();
+                    entry.editor?.destroy(); entry.help?.remove(); entry.after?.remove(); entry.element.remove();
                     h.nodes.delete(data.id); entry = null;
                 }
                 if (!entry && h.parked && h.parked.editor.key === data.key && data.edit
@@ -226,11 +232,12 @@ export function syncAccessibility(h, json) {
                 const after = previous.get(parent);
                 const before = after ? after.nextSibling : parent === h.root ? parent.firstChild : parent.firstChild?.nextSibling;
                 if (entry.element.parentElement !== parent || before !== entry.element) place(parent, entry.element, before ?? null);
-                previous.set(parent, entry.element);
+                if (entry.after && entry.element.nextSibling !== entry.after) parent.insertBefore(entry.after, entry.element.nextSibling);
+                previous.set(parent, entry.after ?? entry.element);
             }
             for (const [id, entry] of h.nodes) {
                 if (next.has(id)) continue;
-                entry.editor?.destroy(); entry.help?.remove(); entry.element.remove();
+                entry.editor?.destroy(); entry.help?.remove(); entry.after?.remove(); entry.element.remove();
                 h.nodes.delete(id);
             }
             if (h.parked) h.editors.set(h.parked.editor.key, h.parked.editor);
@@ -245,11 +252,8 @@ export function syncAccessibility(h, json) {
         }
         h.focused = packet.focus;
         if (owned) {
-            const readonly = active.isConnected && h.root.contains(active)
-                && h.nodes.get(active.dataset?.runeNode)?.editor?.field.readOnly;
             const target = h.nodes.get(packet.focus)?.element
-                ?? (packet.focus === null && h.parked ? h.parked.element : null)
-                ?? (packet.focus === null && readonly ? active : h.root);
+                ?? (packet.focus === null && h.parked ? h.parked.element : h.root);
             if (document.activeElement !== target) target.focus({ preventScroll: true });
         }
     } finally { h.syncing = false; }

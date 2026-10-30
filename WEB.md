@@ -127,16 +127,22 @@ Rune Kit supplies control roles, checked state, declared disabled state and expa
 `TextField::new` supplies the editor's name. A container with multiple editors keeps its
 group name; each editor needs its own name. Textbox shells retain padding-click behavior
 without exposing another editable textbox.
+An editor without a nonempty name or placeholder uses the generic name "Text input".
+Supply a meaningful label when its purpose is not clear from the surrounding content.
 
 For icon actions, set `IconButton::label` or meaningful `help`. A glyph cannot identify an
 action's purpose. For custom controls, use the existing `El::role`, `label`, `help`,
-`level` and `expanded` methods. `checked(Some(value))` supplies a binary state;
-`checked(None)` supplies a mixed checkbox state. `disabled(true)` disables the subtree
-without hiding its content. Missing handlers alone do not declare a disabled control.
+`level` and `expanded` methods. `checked(value)` takes a boolean. Use
+`indeterminate(true)` for a mixed checkbox state; `indeterminate(false)` restores its
+declared checked value. A control with neither method has no checked state.
+`disabled(true)` disables the subtree without hiding its content and releases its
+editor focus. Missing handlers alone do not declare a disabled control.
 
-Inline `El::link` spans expose their existing names and actions. Browser focus uses Rune's
-current modal scope and focus groups. Tab can leave a nonmodal app. A modal contains Tab
-and restores its opener on close. Read-only editors retain native selection and copy.
+Inline `El::link` spans expose their existing names and actions in source order, without
+repeating the surrounding prose. Browser focus uses Rune's current modal scope and focus
+groups. Tab can leave a nonmodal app. A modal contains Tab and restores its opener on
+close. Read-only editors participate in Tab navigation and retain native selection and
+copy without granting edit access.
 
 An unrelated commit preserves the native editor and composition. When a focused virtual
 row unmounts, the shell retains its existing editor until Rune releases editable focus.

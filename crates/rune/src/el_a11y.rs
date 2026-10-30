@@ -2,14 +2,20 @@
 use crate::El;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct CheckState {
+    pub checked: bool,
+    pub indeterminate: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct A11y {
     pub level: Option<u32>,
     pub expanded: Option<bool>,
     pub secure: bool,
     pub disabled: bool,
     pub fallback_label: bool,
-    /// Absent: not checkable. Some(None): mixed. Some(Some(value)): checked or unchecked.
-    pub checked: Option<Option<bool>>,
+    /// Absent when no checked state has been declared.
+    pub checked: Option<CheckState>,
 }
 
 impl El {
@@ -18,9 +24,15 @@ impl El {
         self.a11y.fallback_label = false;
         self
     }
-    /// Checked state. `None` means a mixed checkbox; radios and switches use `Some(bool)`.
-    pub fn checked(mut self, checked: Option<bool>) -> Self {
-        self.a11y.checked = Some(checked);
+    /// Declare whether this element is checked.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.a11y.checked.get_or_insert_default().checked = checked;
+        self
+    }
+
+    /// Declare whether this element has a mixed checked state.
+    pub fn indeterminate(mut self, indeterminate: bool) -> Self {
+        self.a11y.checked.get_or_insert_default().indeterminate = indeterminate;
         self
     }
 
