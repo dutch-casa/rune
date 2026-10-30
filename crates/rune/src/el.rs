@@ -100,13 +100,7 @@ pub(crate) type DragOutFn = Rc<dyn Fn(crate::states::StatesRef<'_>) -> Option<cr
 pub(crate) type DragEndFn = Rc<dyn Fn(crate::states::States<'_>, crate::DragOutcome, &mut Tx)>;
 pub(crate) type EditFn = Rc<dyn for<'a> Fn(crate::states::States<'a>) -> &'a mut TextEdit>;
 
-/// Accessibility state beyond role and label (`El::level`, `El::expanded`, `El::secure`).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct A11y {
-    pub level: Option<u32>,
-    pub expanded: Option<bool>,
-    pub secure: bool,
-}
+pub(crate) use crate::el_a11y::A11y;
 
 pub(crate) use crate::el_focus::FocusSpec;
 
@@ -1557,10 +1551,6 @@ impl El {
     /// than one reachable editor inside, the container does nothing special.
     pub fn role(mut self, role: &'static str) -> Self {
         self.role = role;
-        self
-    }
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
         self
     }
     /// An outline row's depth for accessibility, 1 at the top (ARIA `aria-level`), as a

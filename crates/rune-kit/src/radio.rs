@@ -101,6 +101,7 @@ impl RadioItem {
         }
         let root = row()
             .role("radio")
+            .checked(Some(self.checked))
             .label(self.label)
             .gap(8.0)
             .items_start()

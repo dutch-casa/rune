@@ -1,6 +1,8 @@
 //! Browser-only access to the focused edit, kept beside Runtime so the shell sees no nodes.
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 use super::*;
+#[path = "web_runtime/accessibility.rs"]
+pub(crate) mod accessibility;
 
 /// The last context sent to the DOM. Secure text never enters this cache.
 #[derive(Default)]
@@ -12,6 +14,8 @@ pub(crate) struct Mirror {
     pub anchor: u32,
     pub focus: u32,
     pub secure: bool,
+    pub custom_paste: bool,
+    pub rich_paste: bool,
 }
 
 /// Read at most 512 UTF-16 units on each side, without scanning the document prefix.
@@ -83,6 +87,89 @@ mod tests {
         rt.frame(0.0);
         assert_eq!((&*rt.state.0.text, rt.state.1), ("aéc", 1));
         assert_eq!(byte_at("a🦀c", 2), None);
+    }
+
+    #[test]
+    fn native_paste_uses_the_captured_selection_and_paste_sanitization() {
+        fn view(state: &(crate::TextEdit, usize), _: &mut Cx<(crate::TextEdit, usize)>) -> El {
+            crate::text_input(&state.0, crate::tok::type_::BODY).key("input").single_line()
+                .on_edit(|s: &mut (crate::TextEdit, usize)| &mut s.0)
+                .on_input_change(|s: &mut (crate::TextEdit, usize), _| s.1 += 1)
+        }
+        let mut rt = Runtime::new((crate::TextEdit::new("a🦀b"), 0), view, (300.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let key = rt.nodes.iter().find(|n| n.key.as_deref() == Some("input")).unwrap().path.clone();
+        rt.set_focus(Some(key.clone()), true);
+        let mut event = json!({"kind":"paste_edit", "key":key, "base":0, "expected":"a🦀b",
+            "start":1, "end":3, "text":"X\r\nY\t\u{2028}", "hasHtml":false});
+        assert!(rt.web_edit(&event));
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.0.text, rt.state.0.focus, rt.state.1), ("aXYb", 3, 1));
+        assert!(!rt.web_edit(&event), "a stale clipboard context cannot edit again");
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.0.text, rt.state.1), ("aXYb", 1));
+
+        event["expected"] = json!("aXYb");
+        event["start"] = json!(1); event["end"] = json!(2); event["text"] = json!("X");
+        assert!(rt.web_edit(&event));
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.0.text, rt.state.0.focus, rt.state.1), ("aXYb", 2, 1),
+            "replacing identical text still collapses the selection");
+
+        event["kind"] = json!("paste"); event["anchor"] = json!(1); event["focus"] = json!(3);
+        assert!(rt.web_edit(&event));
+        rt.paste("Q");
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.0.text, rt.state.1), ("aQb", 2), "model-owned paste uses the captured selection");
+    }
+
+    #[test]
+    fn paste_policy_changes_invalidate_the_native_path() {
+        #[derive(Default)]
+        struct State { edit: crate::TextEdit, hook: bool, calls: usize }
+        fn view(s: &State, _: &mut Cx<State>) -> El {
+            let input = crate::text_input(&s.edit, crate::tok::type_::BODY).key("input")
+                .on_edit(|s: &mut State| &mut s.edit);
+            if s.hook {
+                input.on_input_paste(|s: &mut State, _, _| {
+                    s.calls += 1;
+                    s.edit.paste("[hook]");
+                    true
+                })
+            } else { input }
+        }
+        let mut rt = Runtime::new(State { edit: crate::TextEdit::new("abc"), ..State::default() },
+            view, (300.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let key = rt.nodes.iter().find(|n| n.key.as_deref() == Some("input")).unwrap().path.clone();
+        rt.set_focus(Some(key.clone()), true);
+        let mut mirror = Mirror::default();
+        assert!(rt.web_context(&mut mirror));
+        assert!(!mirror.custom_paste && !mirror.rich_paste);
+        rt.update(|s, _| s.hook = true);
+        rt.frame(0.0);
+        assert!(rt.web_context(&mut mirror), "a policy-only change must sync");
+        assert!(mirror.custom_paste);
+        let mut event = json!({"kind":"paste_edit", "key":key, "base":0, "expected":"abc",
+            "start":1, "end":2, "text":"x", "hasHtml":false});
+        assert!(!rt.web_edit(&event), "a newly installed paste hook cannot be bypassed");
+        event["kind"] = json!("paste"); event["anchor"] = json!(1); event["focus"] = json!(2);
+        assert!(rt.web_edit(&event));
+        rt.paste("x");
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.edit.text, rt.state.calls), ("a[hook]c", 1));
+
+        rt.update(|s, _| { s.hook = false; s.edit = std::mem::take(&mut s.edit).rich(); });
+        rt.frame(0.0);
+        assert!(rt.web_context(&mut mirror));
+        assert!(!mirror.custom_paste && mirror.rich_paste);
+        event["kind"] = json!("paste_edit"); event["expected"] = json!("a[hook]c");
+        event["start"] = json!(1); event["end"] = json!(7); event["hasHtml"] = json!(true);
+        assert!(!rt.web_edit(&event), "rich HTML must not bypass the model's rich paste");
+        event["hasHtml"] = json!(false);
+        assert!(rt.web_edit(&event), "plain text can use native insertion in a rich field");
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.edit.text, rt.state.calls), ("axc", 1));
     }
 
     #[test]
@@ -382,10 +469,15 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(crate) fn web_context(&self, mirror: &mut Mirror) -> bool {
-        match self.focused_input().filter(|i| i.access.is_some()) {
-            Some(input) => mirror.update(self.focused.as_deref().unwrap_or_default(), Some(&input.edit)),
-            None => mirror.update("", None),
-        }
+        let (changed, custom_paste, rich_paste) = match self.focused_input().filter(|i| i.access.is_some()) {
+            Some(input) => (mirror.update(self.focused.as_deref().unwrap_or_default(), Some(&input.edit)),
+                input.paste.is_some(), input.edit.is_rich() && !input.edit.is_secure()),
+            None => (mirror.update("", None), false, false),
+        };
+        let policy_changed = mirror.custom_paste != custom_paste || mirror.rich_paste != rich_paste;
+        mirror.custom_paste = custom_paste;
+        mirror.rich_paste = rich_paste;
+        changed || policy_changed
     }
 
     pub(crate) fn web_key(&mut self, event: &serde_json::Value) -> bool {
@@ -401,16 +493,20 @@ impl<S: 'static> Runtime<S> {
             "Backspace" => crate::Key::Backspace, "Delete" => crate::Key::Delete,
             "ContextMenu" => crate::Key::ContextMenu,
             name if name.chars().count() == 1 && mods.cmd => crate::Key::Command(name.chars().next().unwrap().to_ascii_lowercase()),
+            name if name.chars().count() == 1 => crate::Key::Text(name.to_owned()),
             _ => return false,
         };
         let event_key = crate::KeyEvent { key, mods };
-        let activate = event_key.key == crate::Key::Tab;
+        let up = flag("up");
+        let activate = !up && event_key.key == crate::Key::Tab;
         let repeat = flag("repeat");
         let code = event["code"].as_str().filter(|c| !c.is_empty() && !c.contains('+'))
             .and_then(|c| c.parse::<crate::Shortcut>().ok())
             .map(|s| s.physical_key());
         if let Some(key) = code {
-            self.physical_with_fallback(crate::PhysicalInput::Key { key, mods, pressed: true, repeat }, Some(event_key));
+            self.physical_with_fallback(crate::PhysicalInput::Key { key, mods, pressed: !up, repeat }, Some(event_key));
+        } else if up {
+            self.key_up(event_key);
         } else if repeat {
             self.repeat_key(event_key);
         } else {
@@ -426,21 +522,35 @@ impl<S: 'static> Runtime<S> {
         }
     }
 
-    pub(crate) fn web_edit(&mut self, event: &serde_json::Value) {
-        let Some(key) = event["key"].as_str() else { return };
-        if self.focused.as_deref() != Some(key) || self.has_secure_focus() { return; }
+    pub(crate) fn web_edit(&mut self, event: &serde_json::Value) -> bool {
+        let Some(key) = event["key"].as_str() else { return false };
+        if self.focused.as_deref() != Some(key) || self.has_secure_focus() { return false; }
+        let paste = event["kind"] == "paste_edit";
+        if paste && self.focused_input().is_none_or(|input| {
+            input.paste.is_some() || (input.edit.is_rich() && event["hasHtml"] == true)
+        }) { return false; }
         let number = |key: &str| event[key].as_u64().and_then(|n| usize::try_from(n).ok());
-        let Some(base) = number("base") else { return };
-        let Some(expected) = event["expected"].as_str() else { return };
+        let Some(base) = number("base") else { return false };
+        let Some(expected) = event["expected"].as_str() else { return false };
         let mut tx = self.transaction();
         let composing_before = self.composing();
+        let mut accepted = false;
         let changed = self.with_focused(|edit| {
             // Browser edits belong to the snapshot from which its context was mirrored.
             if !edit.text.get(base..).is_some_and(|s| s.starts_with(expected)) { return EditOutcome::default(); }
-            if event["kind"] == "edit" || event["kind"] == "preedit" {
+            if event["kind"] == "paste" {
+                let Some((anchor, focus)) = number("anchor").zip(number("focus")) else { return EditOutcome::default() };
+                let Some((a, f)) = byte_at(expected, anchor).zip(byte_at(expected, focus)) else { return EditOutcome::default() };
+                edit.anchor = base + a; edit.focus = base + f;
+                edit.snap_to_pills();
+                accepted = true;
+                return EditOutcome::default();
+            }
+            if event["kind"] == "edit" || event["kind"] == "preedit" || paste {
                 let Some((start, end)) = number("start").zip(number("end")) else { return EditOutcome::default() };
                 let Some((a, b)) = byte_at(expected, start).zip(byte_at(expected, end)) else { return EditOutcome::default() };
                 if a > b { return EditOutcome::default(); }
+                accepted = true;
                 edit.ime(&Ime::Preedit(String::new(), None));
                 let raw = (base + a, base + b);
                 edit.anchor = raw.0; edit.focus = raw.1;
@@ -451,6 +561,7 @@ impl<S: 'static> Runtime<S> {
                     edit.ime(&Ime::Preedit(text.to_owned(), Some((text.len(), text.len()))));
                     return EditOutcome::default();
                 }
+                if paste { return edit.paste(text); }
                 edit.insert(text);
                 if snapped { return EditOutcome::default(); }
             }
@@ -458,11 +569,13 @@ impl<S: 'static> Runtime<S> {
                 && let Some((a, f)) = byte_at(&edit.text[base..], anchor).zip(byte_at(&edit.text[base..], focus)) {
                 edit.anchor = base + a; edit.focus = base + f;
                 edit.snap_to_pills();
+                accepted = true;
             }
             EditOutcome::default()
         }, &mut tx);
         if composing_before || event["kind"] == "preedit" { self.ime_eat_key_up = true; }
         if changed { self.dirty = true; }
         merge(&mut self.pending, tx);
+        accepted
     }
 }

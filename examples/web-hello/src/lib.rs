@@ -33,22 +33,24 @@ fn view(state: &State, cx: &mut Cx<State>) -> El {
         messages = messages.child(text(message.clone()).key(format!("message-{i}"))
             .font(type_::BODY).color(t.text).w_full().padding(16.0).radius(12.0).fill(t.card));
     }
-    let composer = text_input(&state.draft, type_::BODY).key("composer")
+    let composer = text_input(&state.draft, type_::BODY).key("composer").label("Message")
         .placeholder("Message", t.text_secondary).color(t.text)
         .grow(1.0).h(48.0).padding(12.0).radius(12.0).fill(t.card)
         .on_edit(|s: &mut State| &mut s.draft).on_submit(send);
-    let send_button = el().key("send").h(48.0).px(16.0).center().radius(12.0).fill(t.control_off)
+    let send_button = el().key("send").role("button").label("Send").focusable(true)
+        .h(48.0).px(16.0).center().radius(12.0).fill(t.control_off)
         .child(text("Send").font(type_::LABEL).color(t.text)).on_press_tx(send);
-    let copy = el().key("copy").h(44.0).px(8.0).center()
+    let copy = el().key("copy").role("button").label("Copy last").focusable(true).h(44.0).px(8.0).center()
         .child(text("Copy last").font(type_::LABEL).color(t.text_secondary)).on_press_tx(|s: &mut State, tx| {
             if let Some(message) = s.messages.last() { tx.copy(message.clone()); }
         });
-    let title = text("Messages").font(type_::TITLE).color(t.text).grow(1.0);
+    let title = text("Messages").font(type_::TITLE).color(t.text);
     #[cfg(target_arch = "wasm32")]
-    let title = title.on_press(|_: &mut State| { let _ = rune::web::open_url("https://www.rust-lang.org/"); });
-    col().w_full().h_full().pt(16.0 + top).pr(16.0 + right).pb(16.0 + bottom).pl(16.0 + left).gap(8.0).fill(t.bg)
-        .child(row().w_full().center_y().child(title).child(copy))
-        .child(col().key("messages").w_full().grow(1.0).shrink()
+    let title = title.role("link").focusable(true)
+        .on_press(|_: &mut State| { let _ = rune::web::open_url("https://www.rust-lang.org/"); });
+    col().role("main").w_full().h_full().pt(16.0 + top).pr(16.0 + right).pb(16.0 + bottom).pl(16.0 + left).gap(8.0).fill(t.bg)
+        .child(row().w_full().center_y().child(col().grow(1.0).role("heading").level(1).child(title)).child(copy))
+        .child(col().key("messages").role("log").label("Messages").w_full().grow(1.0).shrink()
             .scroll(ScrollSpec { stick_bottom: true }).scroll_edge_fade(16.0).child(messages))
         .child(row().w_full().gap(8.0).child(composer).child(send_button))
 }

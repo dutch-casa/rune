@@ -83,7 +83,7 @@ impl Switch {
         } else {
             control
         };
-        let mut root = row().role("switch").gap(8.0).center_y();
+        let mut root = row().role("switch").checked(Some(self.checked)).gap(8.0).center_y();
         if let Some(l) = &self.label {
             root = root.label(l.clone());
             if !self.hide_label {

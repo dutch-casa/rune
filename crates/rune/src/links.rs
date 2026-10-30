@@ -14,6 +14,25 @@ pub(super) struct LinkState {
     secondary: Option<usize>,
 }
 
+pub(super) struct LinkElement<'a> {
+    pub index: usize,
+    pub key: &'a str,
+    pub role: &'static str,
+    pub label: Option<&'a str>,
+    pub text: Option<&'a str>,
+    pub rect: [f32; 4],
+    pub visible: [f32; 4],
+    pub focused: bool,
+    pub hovered: bool,
+    pub pressed: bool,
+}
+
+fn union(k: usize, boxes: &[(usize, [f32; 4])]) -> Option<[f32; 4]> {
+    boxes.iter().filter(|(j, _)| *j == k).fold(None, |u: Option<[f32; 4]>, (_, r)| {
+        Some(u.map_or(*r, |u| [u[0].min(r[0]), u[1].min(r[1]), u[2].max(r[2]), u[3].max(r[3])]))
+    })
+}
+
 /// Where node `n`'s text starts inside its border box `rect` (points, x0 y0 x1 y1), its text
 /// drawn `k` times its size.
 pub(super) fn origin(n: &Node, spec: &TextSpec, layout: &Layout<Ink>, rect: [f32; 4], s: f32, k: f32) -> [f32; 2] {
@@ -300,6 +319,20 @@ impl<S: 'static> Runtime<S> {
         self.nodes[i].text.as_ref()?.links.get(k).map(|l| l.id.clone())
     }
 
+    pub(super) fn focused_link_index(&self, i: usize) -> Option<usize> {
+        self.links.focus.filter(|&k| self.focused.as_deref() == Some(&self.nodes[i].path) && k < self.link_count(i))
+    }
+
+    #[cfg(any(target_arch = "wasm32", test))]
+    pub(super) fn focus_link(&mut self, i: usize, k: usize) -> bool {
+        if k >= self.link_count(i) || !self.can_focus(i) { return false; }
+        let changed = self.set_focus(Some(self.nodes[i].path.clone()), true) || self.links.focus != Some(k);
+        self.links.focus = Some(k);
+        self.dirty |= changed;
+        self.pending.scroll_to.push((None, self.nodes[i].path.clone()));
+        true
+    }
+
     /// The Menu key on focused node `i`'s focused link: its `on_link_secondary`, at the
     /// bottom-left of its first line box.
     pub(super) fn focused_link_menu(&mut self, i: usize, tx: &mut Tx) -> bool {
@@ -319,45 +352,54 @@ impl<S: 'static> Runtime<S> {
         true
     }
 
+    pub(super) fn visit_link_elements<'a>(&'a self, i: usize, visible: [f32; 4], mut visit: impl FnMut(LinkElement<'a>)) {
+        let n = &self.nodes[i];
+        let Some(spec) = n.text.as_ref().filter(|t| !t.links.is_empty()) else { return };
+        let boxes = self.link_boxes(i, self.drawn_box(i));
+        let (hovered, pressed, _) = self.link_states(i);
+        let focused = self.focused_link_index(i);
+        for (k, link) in spec.links.iter().enumerate() {
+            let Some(r) = union(k, &boxes) else { continue };
+            let (x0, y0) = (r[0].max(visible[0]), r[1].max(visible[1]));
+            let (x1, y1) = (r[2].min(visible[0] + visible[2]), r[3].min(visible[1] + visible[3]));
+            let text = (!n.is_secure()).then(|| spec.source_slice(link.start, link.end)).flatten();
+            visit(LinkElement {
+                index: k, key: &link.id, role: link.role, label: link.label.as_deref().or(text), text,
+                rect: [r[0], r[1], r[2] - r[0], r[3] - r[1]],
+                visible: [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)],
+                focused: focused == Some(k), hovered: hovered == Some(k), pressed: pressed == Some(k),
+            });
+        }
+    }
+
     /// Reports each link as its own element after its text, which hands it its focus.
     pub(super) fn link_elements(&self, elements: &mut Vec<ElementInfo>) {
         for i in 0..self.nodes.len() {
             let n = &self.nodes[i];
-            let Some(spec) = n.text.as_ref().filter(|t| !t.links.is_empty()) else { continue };
+            if n.text.as_ref().is_none_or(|t| t.links.is_empty()) { continue; }
             let Some(at) = elements.iter().position(|e| e.path == n.path) else { continue };
             let text = elements[at].clone();
             elements[at].focusable = false;
             elements[at].focused = false;
             elements[at].focus_visible = false;
-            let (hovered, pressed, _) = self.link_states(i);
-            let focused = self.links.focus.filter(|_| self.focused.as_deref() == Some(&n.path));
-            let boxes = self.link_boxes(i, self.drawn_box(i));
             let targets = self.link_boxes(i, n.target);
-            let union = |k: usize, bs: &[(usize, [f32; 4])]| bs.iter().filter(|(j, _)| *j == k).fold(None, |u: Option<[f32; 4]>, (_, r)| {
-                Some(u.map_or(*r, |u| [u[0].min(r[0]), u[1].min(r[1]), u[2].max(r[2]), u[3].max(r[3])]))
-            });
-            for (k, l) in spec.links.iter().enumerate() {
-                let Some(r) = union(k, &boxes) else { continue };
-                let t = union(k, &targets).unwrap_or(r);
-                let v = text.visible;
-                let (x0, y0) = (r[0].max(v[0]), r[1].max(v[1]));
-                let (x1, y1) = (r[2].min(v[0] + v[2]), r[3].min(v[1] + v[3]));
-                let words = (!spec.redacted).then(|| spec.source_slice(l.start, l.end).map(str::to_owned)).flatten();
+            self.visit_link_elements(i, text.visible, |link| {
+                let t = union(link.index, &targets).map(|r| [r[0], r[1], r[2] - r[0], r[3] - r[1]]).unwrap_or(link.rect);
                 elements.push(ElementInfo {
                     stuck: 0.0,
-                    path: format!("{}#link-{k}", n.path),
-                    key: Some(l.id.clone()),
-                    role: l.role,
-                    label: l.label.clone().or_else(|| words.clone()),
-                    text: words,
-                    rect: [r[0], r[1], r[2] - r[0], r[3] - r[1]],
-                    target: [t[0], t[1], t[2] - t[0], t[3] - t[1]],
-                    visible: [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)],
+                    path: format!("{}#link-{}", n.path, link.index),
+                    key: Some(link.key.to_owned()),
+                    role: link.role,
+                    label: link.label.map(str::to_owned),
+                    text: link.text.map(str::to_owned),
+                    rect: link.rect,
+                    target: t,
+                    visible: link.visible,
                     focusable: text.focusable,
-                    focused: focused == Some(k),
-                    focus_visible: self.keyboard_focus && focused == Some(k),
-                    hover: if hovered == Some(k) { 1.0 } else { 0.0 },
-                    press: if pressed == Some(k) { 1.0 } else { 0.0 },
+                    focused: link.focused,
+                    focus_visible: self.keyboard_focus && link.focused,
+                    hover: if link.hovered { 1.0 } else { 0.0 },
+                    press: if link.pressed { 1.0 } else { 0.0 },
                     parent: Some(i),
                     caret: None,
                     selected: None,
@@ -366,7 +408,7 @@ impl<S: 'static> Runtime<S> {
                     item_selected: false,
                     ..text.clone()
                 });
-            }
+            });
         }
     }
 

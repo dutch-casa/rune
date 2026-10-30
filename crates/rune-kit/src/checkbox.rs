@@ -94,7 +94,8 @@ impl Checkbox {
         if self.state == State::Rest {
             control = control.hover(c.surface_hover);
         }
-        let mut root = row().role("checkbox").gap(12.0).center_y().child(control.focus_ring(1.0, 0.0, c.border_active));
+        let mut root = row().role("checkbox").checked(if self.indeterminate { None } else { Some(self.checked) })
+            .gap(12.0).center_y().child(control.focus_ring(1.0, 0.0, c.border_active));
         if let Some(l) = &self.label {
             root = root.label(l.clone());
             let mut content = col().key("content");

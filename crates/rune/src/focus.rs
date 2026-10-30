@@ -73,9 +73,13 @@ impl<S: 'static> Runtime<S> {
             if !changed { break; }
         }
     }
-    /// Input may reach node `i`: it's outside any `El::inert` subtree and not behind a modal.
-    pub(super) fn allowed(&self, i: usize) -> bool {
+    /// Retained content in the active modal scope, outside any `El::inert` subtree.
+    pub(super) fn in_scope(&self, i: usize) -> bool {
         !self.nodes.get(i).is_some_and(|n| n.inert) && (self.active_modal().is_none() || self.modal_members.get(i).copied().unwrap_or(false))
+    }
+    /// Input admission is stricter than semantic exposure: disabled content stays readable.
+    pub(super) fn allowed(&self, i: usize) -> bool {
+        self.in_scope(i) && !self.nodes[i].a11y.disabled
     }
     pub(super) fn can_focus(&self, i: usize) -> bool {
         let n = &self.nodes[i];
@@ -91,10 +95,11 @@ impl<S: 'static> Runtime<S> {
         }
         self.allowed(i) && !self.subtree_exiting(i) && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
     }
-    /// Whether Return goes to focused element `i` rather than the default button: a focused
-    /// link, a `focus_highlight` row, or an item of a menu, list, tree or grid group.
+    /// Return takes a focused link or row. Browser buttons and links also take Return;
+    /// desktop buttons retain the window's default-button behavior.
     fn takes_return(&self, i: usize) -> bool {
         self.link_focused(i) || self.nodes[i].focus.highlight.is_some()
+            || (cfg!(target_arch = "wasm32") && matches!(self.nodes[i].role, "button" | "link"))
             || self.group(i).is_some_and(|g| LIST_ROLES.contains(&self.nodes[g].role) || VERTICAL_ROLES.contains(&self.nodes[g].role))
     }
     /// Return with no modifiers presses the window's default button (`El::default_button`)
@@ -238,12 +243,12 @@ impl<S: 'static> Runtime<S> {
             }) || (input_focused && self.unmounted_focused.iter().any(|w| edit.matches_history(w)))
         };
         let virtual_req = || self.virtual_inputs.iter()
-            .filter(|(_, i)| i.edit.focused)
+            .filter(|(_, i)| i.access.is_some() && i.edit.focused)
             .map(|(p, i)| (p.as_str(), &i.edit));
         // A newly requested text field wins; a focused control otherwise retains focus. Nothing
         // inside an `El::inert` subtree takes or keeps it.
         let requested = (0..nodes.len())
-            .filter(|&j| shown(j) && nodes[j].input.as_ref().is_some_and(|i| i.edit.focused))
+            .filter(|&j| shown(j) && nodes[j].input.as_ref().is_some_and(|i| i.access.is_some() && i.edit.focused))
             .map(|j| (nodes[j].path.as_str(), &nodes[j].input.as_ref().unwrap().edit));
         // Hash iteration must not decide between simultaneous offscreen requests. Select
         // only the winning path rather than allocating and sorting every focused field.
@@ -277,7 +282,7 @@ impl<S: 'static> Runtime<S> {
         });
         changed
     }
-    fn tab_order(&self) -> Vec<usize> {
+    pub(super) fn tab_order(&self) -> Vec<usize> {
         let all: Vec<_> = (0..self.nodes.len()).filter(|&i| self.can_focus(i) && self.nodes[i].focus.order >= 0).collect();
         let mut order: Vec<_> = all.iter().copied().filter(|&i| {
             let Some(g) = self.group(i) else { return true; };
@@ -398,8 +403,7 @@ impl<S: 'static> Runtime<S> {
             if let Some(f) = self.nodes[i].on_press.clone() { f(states!(self), tx); }
             return true;
         }
-        // Space presses the focused control. Return presses only rows and links; for a button
-        // it goes on to the default button (`default_button_key`, which ran first) or `on_key`.
+        // Space presses the focused control. Return follows the host's focused-control policy.
         let space = ev.key == Key::Text(" ".into());
         if self.nodes[i].input.is_none() && (space || (ev.key == Key::Enter && self.takes_return(i))) {
             // A row the user cannot see highlighted (the pointer left it) chooses nothing.

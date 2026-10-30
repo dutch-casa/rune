@@ -6,11 +6,22 @@ use winit::keyboard::ModifiersState;
 #[wasm_bindgen(module = "/src/web/bridge.js")]
 extern "C" {
     fn mount(canvas: &web_sys::HtmlCanvasElement, callback: &js_sys::Function) -> JsValue;
-    fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32, secure: bool);
-    fn activate(handle: &JsValue);
     fn destroy(handle: &JsValue);
     #[wasm_bindgen(js_name = pastedImage)]
     fn pasted_image(handle: &JsValue, max: u32) -> js_sys::Promise;
+}
+
+#[wasm_bindgen(module = "/src/web/accessibility.js")]
+extern "C" {
+    #[wasm_bindgen(js_name = syncAccessibility)]
+    fn sync_accessibility(handle: &JsValue, packet: &str);
+}
+
+#[wasm_bindgen(module = "/src/web/text_input.js")]
+extern "C" {
+    fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32,
+        secure: bool, custom_paste: bool, rich_paste: bool);
+    fn activate(handle: &JsValue);
 }
 
 pub(super) struct Bridge {
@@ -20,6 +31,7 @@ pub(super) struct Bridge {
     mods: ModifiersState,
     touch: Option<Touch>,
     mirror: crate::runtime::web_runtime::Mirror,
+    accessibility: crate::runtime::web_runtime::accessibility::Mirror,
 }
 struct Touch {
     id: u64,
@@ -46,7 +58,7 @@ impl Bridge {
         });
         let dispose_viewport = platform::viewport(canvas, callback.as_ref().unchecked_ref());
         Self { handle: mount(canvas, callback.as_ref().unchecked_ref()), _callback: callback, dispose_viewport,
-            mods: ModifiersState::empty(), touch: None, mirror: Default::default() }
+            mods: ModifiersState::empty(), touch: None, mirror: Default::default(), accessibility: Default::default() }
     }
 }
 impl Drop for Bridge {
@@ -58,10 +70,15 @@ impl Drop for Bridge {
 
 impl<S: 'static> Running<S> {
     pub(super) fn sync_input(&mut self, focus: bool) {
-        if self.rt.web_context(&mut self.input.mirror) {
+        let context_changed = self.rt.web_context(&mut self.input.mirror);
+        if context_changed {
             let m = &self.input.mirror;
-            sync(&self.input.handle, &m.key, &m.text, m.base, m.anchor, m.focus, m.secure);
+            sync(&self.input.handle, &m.key, &m.text, m.base, m.anchor, m.focus, m.secure, m.custom_paste, m.rich_paste);
         }
+        if let Some(packet) = self.input.accessibility.sync(&self.rt, context_changed) {
+            sync_accessibility(&self.input.handle, packet);
+        }
+        self.input.accessibility.delivered();
         if focus { activate(&self.input.handle); }
     }
 
@@ -78,14 +95,26 @@ impl<S: 'static> Running<S> {
                 self.shared.visible.store(event["visible"].as_bool().unwrap_or(false), Ordering::Release);
                 return;
             }
-            Some("edit" | "selection" | "preedit") => self.rt.web_edit(event),
+            Some("edit" | "selection" | "preedit") => { self.rt.web_edit(event); }
+            Some("paste_edit") => {
+                self.rt.web_edit(event);
+                // A rejected or sanitised browser insertion must still restore the mirror.
+                self.input.mirror.key.clear();
+            }
             Some("sync") => self.input.mirror.key.clear(), // Composition's final sync was deferred by the DOM.
             Some("paste") => {
-                let mut content = crate::ClipboardContent::new(event["text"].as_str().unwrap_or_default());
-                if let Some(html) = event["html"].as_str().filter(|html| !html.is_empty()) { content = content.with_html(html); }
-                let handle = &self.input.handle;
-                let image = (event["image"].as_bool() == Some(true)).then_some(|| pasted_image(handle, crate::clipboard::MAX_IMAGE_BYTES as u32));
-                self.clipboard.paste_event(&mut self.rt, content, image);
+                let target_matches = event["key"].as_str().is_some_and(|key| self.rt.paste_target().as_deref() == Some(key));
+                let selection_matches = target_matches && (self.rt.has_secure_focus()
+                    || event["composing"] == true || self.rt.web_edit(event));
+                if selection_matches {
+                    let mut content = crate::ClipboardContent::new(event["text"].as_str().unwrap_or_default());
+                    if let Some(html) = event["html"].as_str().filter(|html| !html.is_empty()) { content = content.with_html(html); }
+                    let handle = &self.input.handle;
+                    let image = (event["image"].as_bool() == Some(true)).then_some(|| pasted_image(handle, crate::clipboard::MAX_IMAGE_BYTES as u32));
+                    self.clipboard.paste_event(&mut self.rt, content, image);
+                }
+                // A rejected or non-cancellable browser insertion must restore the mirror.
+                self.input.mirror.key.clear();
             }
             Some("secure") => {
                 if let serde_json::Value::String(text) = event["text"].take() {
@@ -93,6 +122,9 @@ impl<S: 'static> Running<S> {
                 }
             }
             Some("key") => activate = self.rt.web_key(event),
+            Some("accessibility") => {
+                self.rt.web_accessibility_action(event);
+            }
             _ => {}
         }
         // Commit within the DOM event: clipboard, link and soft-keyboard APIs need activation.

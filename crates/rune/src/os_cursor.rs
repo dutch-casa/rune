@@ -16,12 +16,13 @@
 //! no frame.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{CursorIcon, CustomCursor, Window};
 
 use crate::el::Cursor;
+use crate::time::Instant;
 
 /// How often an image cursor is set again while it holds the pointer and nothing redraws.
 pub(crate) const REASSERT: Duration = Duration::from_millis(50);
