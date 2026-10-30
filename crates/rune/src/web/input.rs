@@ -4,7 +4,8 @@ use winit::event::{ElementState, MouseButton, TouchPhase};
 use winit::keyboard::ModifiersState;
 #[wasm_bindgen(module = "/src/web/text_input.js")]
 extern "C" {
-    fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32, secure: bool);
+    fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32,
+        secure: bool, custom_paste: bool, rich_paste: bool);
 }
 
 
@@ -74,7 +75,7 @@ impl<S: 'static> Running<S> {
     pub(super) fn sync_input(&mut self, focus: bool) {
         if self.rt.web_context(&mut self.input.mirror) {
             let m = &self.input.mirror;
-            sync(&self.input.handle, &m.key, &m.text, m.base, m.anchor, m.focus, m.secure);
+            sync(&self.input.handle, &m.key, &m.text, m.base, m.anchor, m.focus, m.secure, m.custom_paste, m.rich_paste);
         }
         let next_copy = self.rt.copy_text().unwrap_or_default();
         if self.input.copy_cache != next_copy {
@@ -106,14 +107,26 @@ impl<S: 'static> Running<S> {
                 self.shared.visible.store(event["visible"].as_bool().unwrap_or(false), Ordering::Release);
                 return;
             }
-            Some("edit" | "selection" | "preedit") => self.rt.web_edit(event),
+            Some("edit" | "selection" | "preedit") => { self.rt.web_edit(event); }
+            Some("paste_edit") => {
+                self.rt.web_edit(event);
+                self.input.mirror.key.clear();
+            }
             Some("sync") => self.input.mirror.key.clear(), // Composition's final sync was deferred by the DOM.
-            Some("paste") if self.rt.web_can_paste(event["key"].as_str().unwrap_or_default()) => {
-                let mut content = crate::ClipboardContent::new(event["text"].as_str().unwrap_or_default());
-                if let Some(html) = event["html"].as_str().filter(|html| !html.is_empty()) { content = content.with_html(html); }
-                let handle = &self.input.handle;
-                let image = (event["image"].as_bool() == Some(true)).then_some(|| pasted_image(handle, crate::clipboard::MAX_IMAGE_BYTES as u32));
-                self.clipboard.paste_event(&mut self.rt, content, image);
+            Some("paste") => {
+                let can_paste = self.rt.web_can_paste(event["key"].as_str().unwrap_or_default());
+                let secure = self.rt.has_secure_focus();
+                let selection_matches = can_paste && event["secure"].as_bool() == Some(secure)
+                    && (secure || self.rt.web_edit(event));
+                if selection_matches {
+                    let mut content = crate::ClipboardContent::new(event["text"].as_str().unwrap_or_default());
+                    if let Some(html) = event["html"].as_str().filter(|html| !html.is_empty()) { content = content.with_html(html); }
+                    let handle = &self.input.handle;
+                    let image = (event["image"].as_bool() == Some(true)).then_some(|| pasted_image(handle, crate::clipboard::MAX_IMAGE_BYTES as u32));
+                    self.clipboard.paste_event(&mut self.rt, content, image);
+                }
+                // Rejected or non-cancellable browser insertion must restore the mirror.
+                self.input.mirror.key.clear();
             }
             Some("secure") => {
                 if let serde_json::Value::String(text) = event["text"].take() {

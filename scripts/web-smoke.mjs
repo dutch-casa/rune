@@ -112,11 +112,8 @@ try {
     await page.keyboard.press('Meta+A');
     await page.keyboard.insertText('replacement');
     assert.equal(await page.locator('textarea').inputValue(), 'replacement');
-    // Browser paste is independent of async clipboard-read permission.
-    await page.locator('textarea').evaluate(field => {
-        const clipboardData = new DataTransfer(); clipboardData.setData('text/plain', ' pasted');
-        field.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true }));
-    });
+    await page.evaluate(() => navigator.clipboard.writeText(' pasted'));
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V');
     assert.equal(await page.locator('textarea').inputValue(), 'replacement pasted');
     const popup = context.waitForEvent('page');
     await page.touchscreen.tap(90, 36);

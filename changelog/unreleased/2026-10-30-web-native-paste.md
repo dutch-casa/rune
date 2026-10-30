@@ -1,0 +1,2 @@
+- Keep ordinary browser paste native, then apply its captured selection through `TextEdit::paste`. Preserve sanitization, undo and input callbacks.
+- Retain model-owned custom, rich, image and secure paste handling. Reject stale editor contexts and revoked edit authority, and restore the native editor after rejected or sanitized insertion.

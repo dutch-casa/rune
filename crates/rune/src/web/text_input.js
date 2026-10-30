@@ -1,6 +1,7 @@
 // Native controls retain their identity while Rust owns the editable value.
 const high = n => n >= 0xd800 && n <= 0xdbff;
 const low = n => n >= 0xdc00 && n <= 0xdfff;
+const fromPaste = event => event.inputType === 'insertFromPaste' || event.inputType === 'insertFromPasteAsQuotation';
 function boundary(text, at, forward) {
     if (at > 0 && at < text.length && high(text.charCodeAt(at - 1)) && low(text.charCodeAt(at))) at += forward ? 1 : -1;
     return at;
@@ -35,12 +36,13 @@ export function createEditor(h, key, secure) {
     } else field.setAttribute('autocapitalize', 'sentences');
     field.inputMode = matchMedia('(pointer: coarse)').matches ? 'none' : 'text';
     const e = { field, key, secure, value: '', base: 0, composing: false, composition: '', shift: false,
-        handledInput: null, syncing: false, disposed: false, listeners: [] };
+        handledInput: null, paste: null, syncing: false, disposed: false, listeners: [] };
     const listen = (name, handler) => {
         field.addEventListener(name, handler);
         e.listeners.push(() => field.removeEventListener(name, handler));
     };
-    const current = () => h.context?.key === key && h.context.secure === secure && !field.readOnly && !field.disabled;
+    const current = () => h.context?.key === key && h.context.secure === secure
+        && h.editors.get(key)?.editor === e && !field.readOnly && !field.disabled;
     const send = event => { if (!e.disposed) h.send(event); };
     const changed = (preedit = false) => {
         if (!current()) return;
@@ -56,7 +58,29 @@ export function createEditor(h, key, secure) {
         send(data);
         send({ ...data, kind: 'key_up' });
     };
+    const commitPaste = paste => {
+        if (!current() || paste.invalid) { send({ kind: 'sync' }); return; }
+        if (paste.custom || secure) {
+            h.image = paste.image;
+            try {
+                send({ kind: 'paste', key, secure, text: paste.text, html: paste.html, image: !!paste.image,
+                    base: paste.base, expected: paste.expected, anchor: paste.anchor, focus: paste.focus, composing: paste.composing });
+            } finally {
+                if (h.syncing) queueMicrotask(() => { h.image = undefined; });
+                else h.image = undefined;
+            }
+        } else send({ kind: 'paste_edit', key, base: paste.base, expected: paste.expected,
+            start: paste.start, end: paste.end, text: paste.text, hasHtml: !!paste.html });
+    };
     listen('input', event => {
+        if (e.paste && fromPaste(event)) {
+            const paste = e.paste;
+            e.paste = null;
+            if (secure) field.value = '';
+            commitPaste(paste);
+            return;
+        }
+        e.paste = null;
         if (secure) {
             const text = field.value;
             field.value = '';
@@ -83,20 +107,56 @@ export function createEditor(h, key, secure) {
         });
     }
     listen('paste', event => {
-        if (field.readOnly || field.disabled) return;
-        event.preventDefault();
-        if (!current()) return;
-        const data = event.clipboardData;
-        h.image = secure ? undefined : [...(data?.items ?? [])].find(i => i.kind === 'file' && i.type === 'image/png')?.getAsFile() ?? undefined;
-        try {
-            send({ kind: 'paste', key: e.key, text: data?.getData('text/plain') ?? '', html: secure ? '' : data?.getData('text/html') ?? '', image: !!h.image });
-        } finally {
-            if (h.syncing) queueMicrotask(() => { h.image = undefined; });
-            else h.image = undefined;
+        if (event.defaultPrevented || !current()) return;
+        e.paste = null;
+        const context = h.context, data = event.clipboardData;
+        if (!data) return;
+        const text = data.getData('text/plain'), html = secure ? '' : data.getData('text/html');
+        const invalid = !secure && !e.composing && field.value !== e.value;
+        const custom = e.composing || invalid || !text || context.customPaste || (context.richPaste && !!html)
+            || (secure && !text.split('\r').join('').split('\n').join(''));
+        const backward = field.selectionDirection === 'backward';
+        const paste = { text, html, invalid, custom, base: e.base, expected: e.value, composing: e.composing,
+            start: field.selectionStart, end: field.selectionEnd,
+            anchor: backward ? field.selectionEnd : field.selectionStart, focus: backward ? field.selectionStart : field.selectionEnd,
+            image: !secure ? [...data.items].find(i => i.kind === 'file' && i.type === 'image/png')?.getAsFile() : undefined };
+        if (e.composing && event.cancelable) {
+            event.preventDefault();
+            commitPaste({ ...paste, custom: true });
+            return;
         }
+        e.paste = paste;
+        // Image-only and empty clipboard contents may produce no input event.
+        setTimeout(() => {
+            if (e.paste !== paste) return;
+            e.paste = null;
+            if (!event.defaultPrevented && !paste.beforeinput?.defaultPrevented) commitPaste(paste);
+        }, 0);
     });
     listen('beforeinput', event => {
         if (!current()) return;
+        if (fromPaste(event) && e.paste) {
+            const paste = e.paste, context = h.context;
+            paste.beforeinput = event;
+            if (!context || context.key !== key || context.secure !== secure
+                || (!secure && (field.value !== paste.expected || e.base !== paste.base))) {
+                paste.invalid = true;
+                paste.custom = true;
+            } else {
+                if (context.customPaste || (context.richPaste && paste.html)) paste.custom = true;
+                if (!secure) {
+                    const backward = field.selectionDirection === 'backward';
+                    paste.start = field.selectionStart; paste.end = field.selectionEnd;
+                    paste.anchor = backward ? paste.end : paste.start; paste.focus = backward ? paste.start : paste.end;
+                }
+            }
+            if (paste.custom && event.cancelable && !event.defaultPrevented) {
+                event.preventDefault();
+                e.paste = null;
+                commitPaste(paste);
+                return;
+            }
+        }
         if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') {
             event.preventDefault();
             const handled = e.handledInput === 'Enter';
@@ -159,8 +219,13 @@ export function createEditor(h, key, secure) {
     };
     return e;
 }
-export function sync(h, key, text, base, anchor, focus, secure) {
-    h.context = key ? { key, text: secure ? '' : text, base, anchor, focus, secure } : null;
+export function sync(h, key, text, base, anchor, focus, secure, customPaste, richPaste) {
+    const previous = h.context;
+    if (previous && (previous.key !== key || previous.secure !== secure)) {
+        const pending = h.editors.get(previous.key)?.editor.paste;
+        if (pending) pending.invalid = true;
+    }
+    h.context = key ? { key, text: secure ? '' : text, base, anchor, focus, secure, customPaste, richPaste } : null;
     const entry = h.editors.get(key);
     if (h.context && entry?.editor.secure === secure) entry.editor.sync(h.context.text, base, anchor, focus);
 }

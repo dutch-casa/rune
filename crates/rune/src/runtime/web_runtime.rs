@@ -12,6 +12,8 @@ pub(crate) struct Mirror {
     pub anchor: u32,
     pub focus: u32,
     pub secure: bool,
+    pub custom_paste: bool,
+    pub rich_paste: bool,
 }
 
 
@@ -61,6 +63,58 @@ mod tests {
         rt.frame(0.0);
         assert_eq!((&*rt.state.0.text, rt.state.1), ("aéc", 1));
         assert_eq!(byte_at("a🦀c", 2), None);
+    }
+
+    #[test]
+    fn native_paste_captures_selection_and_respects_current_policy() {
+        struct State { edit: crate::TextEdit, hook: bool, editable: bool, changes: usize, calls: usize }
+        fn view(s: &State, _: &mut Cx<State>) -> El {
+            let input = crate::text_input(&s.edit, crate::tok::type_::BODY).key("input").single_line()
+                .on_input_change(|s: &mut State, _| s.changes += 1);
+            let input = if s.editable { input.on_edit(|s: &mut State| &mut s.edit) } else { input };
+            if s.hook {
+                input.on_input_paste(|s: &mut State, _, _| {
+                    s.calls += 1;
+                    s.edit.paste("[hook]");
+                    true
+                })
+            } else { input }
+        }
+        let mut rt = Runtime::new(State { edit: crate::TextEdit::new("a🦀b"), hook: false, editable: true, changes: 0, calls: 0 },
+            view, (300.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let key = rt.nodes.iter().find(|n| n.key.as_deref() == Some("input")).unwrap().path.clone();
+        rt.set_focus(Some(key.clone()), true);
+        let mut mirror = Mirror::default();
+        assert!(rt.web_context(&mut mirror));
+        assert!(!mirror.custom_paste && !mirror.rich_paste);
+        let mut event = json!({"kind":"paste_edit", "key":key, "base":0, "expected":"a🦀b",
+            "start":1, "end":3, "text":"X\r\nY\t\u{2028}", "hasHtml":false});
+        assert!(rt.web_edit(&event));
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.edit.text, rt.state.edit.focus, rt.state.changes), ("aXYb", 3, 1));
+        assert!(!rt.web_edit(&event), "stale clipboard context must not edit twice");
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.edit.text, rt.state.changes), ("aXYb", 1));
+        assert!(rt.web_context(&mut mirror));
+
+        rt.update(|s, _| s.hook = true);
+        rt.frame(0.0);
+        assert!(rt.web_context(&mut mirror), "a policy-only change must sync");
+        assert!(mirror.custom_paste);
+        event["expected"] = json!("aXYb");
+        event["start"] = json!(1); event["end"] = json!(3);
+        assert!(!rt.web_edit(&event), "new custom policy must revoke native paste admission");
+        event["kind"] = json!("paste"); event["anchor"] = json!(1); event["focus"] = json!(3);
+        assert!(rt.web_edit(&event));
+        rt.paste("Q");
+        rt.frame(0.0);
+        assert_eq!((&*rt.state.edit.text, rt.state.changes, rt.state.calls), ("a[hook]b", 2, 1));
+        rt.update(|s, _| s.editable = false);
+        rt.frame(0.0);
+        event["expected"] = json!("a[hook]b");
+        assert!(!rt.web_can_paste(&key));
+        assert!(!rt.web_edit(&event), "revoked edit authority must reject captured selection");
     }
 
     #[test]
@@ -375,10 +429,15 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(crate) fn web_context(&self, mirror: &mut Mirror) -> bool {
-        match self.focused_input().filter(|i| i.access.is_some()) {
-            Some(input) => mirror.update(self.focused.as_deref().unwrap_or_default(), Some(&input.edit)),
-            None => mirror.update("", None),
-        }
+        let (changed, custom_paste, rich_paste) = match self.focused_input().filter(|i| i.access.is_some()) {
+            Some(input) => (mirror.update(self.focused.as_deref().unwrap_or_default(), Some(&input.edit)),
+                input.paste.is_some(), input.edit.is_rich() && !input.edit.is_secure()),
+            None => (mirror.update("", None), false, false),
+        };
+        let policy_changed = mirror.custom_paste != custom_paste || mirror.rich_paste != rich_paste;
+        mirror.custom_paste = custom_paste;
+        mirror.rich_paste = rich_paste;
+        changed || policy_changed
     }
     pub(crate) fn web_can_paste(&self, key: &str) -> bool {
         self.focused.as_deref() == Some(key) && self.focused_input().is_some_and(|input| input.access.is_some())
@@ -426,21 +485,40 @@ impl<S: 'static> Runtime<S> {
         }
     }
 
-    pub(crate) fn web_edit(&mut self, event: &serde_json::Value) {
-        let Some(key) = event["key"].as_str() else { return };
-        if self.focused.as_deref() != Some(key) || self.has_secure_focus() { return; }
+    pub(crate) fn web_edit(&mut self, event: &serde_json::Value) -> bool {
+        let Some(key) = event["key"].as_str() else { return false };
+        if self.focused.as_deref() != Some(key) || self.has_secure_focus() { return false; }
+        let paste = event["kind"] == "paste_edit";
+        if (paste || event["kind"] == "paste") && !self.web_can_paste(key) { return false; }
+        if paste && self.focused_input().is_none_or(|input| {
+            input.paste.is_some() || (input.edit.is_rich() && event["hasHtml"] == true)
+        }) { return false; }
         let number = |key: &str| event[key].as_u64().and_then(|n| usize::try_from(n).ok());
-        let Some(base) = number("base") else { return };
-        let Some(expected) = event["expected"].as_str() else { return };
+        let Some(base) = number("base") else { return false };
+        let Some(expected) = event["expected"].as_str() else { return false };
         let mut tx = self.transaction();
         let composing_before = self.composing();
+        let mut accepted = false;
         let changed = self.with_focused(|edit| {
             // Browser edits belong to the snapshot from which its context was mirrored.
             if !edit.text.get(base..).is_some_and(|s| s.starts_with(expected)) { return EditOutcome::default(); }
-            if event["kind"] == "edit" || event["kind"] == "preedit" {
+            if event["kind"] == "paste" {
+                if event["composing"] == true {
+                    accepted = true;
+                    return EditOutcome::default();
+                }
+                let Some((anchor, focus)) = number("anchor").zip(number("focus")) else { return EditOutcome::default() };
+                let Some((a, f)) = byte_at(expected, anchor).zip(byte_at(expected, focus)) else { return EditOutcome::default() };
+                edit.anchor = base + a; edit.focus = base + f;
+                edit.snap_to_pills();
+                accepted = true;
+                return EditOutcome::default();
+            }
+            if event["kind"] == "edit" || event["kind"] == "preedit" || paste {
                 let Some((start, end)) = number("start").zip(number("end")) else { return EditOutcome::default() };
                 let Some((a, b)) = byte_at(expected, start).zip(byte_at(expected, end)) else { return EditOutcome::default() };
                 if a > b { return EditOutcome::default(); }
+                accepted = true;
                 edit.ime(&Ime::Preedit(String::new(), None));
                 let raw = (base + a, base + b);
                 edit.anchor = raw.0; edit.focus = raw.1;
@@ -451,6 +529,7 @@ impl<S: 'static> Runtime<S> {
                     edit.ime(&Ime::Preedit(text.to_owned(), Some((text.len(), text.len()))));
                     return EditOutcome::default();
                 }
+                if paste { return edit.paste(text); }
                 edit.insert(text);
                 if snapped { return EditOutcome::default(); }
             }
@@ -458,11 +537,13 @@ impl<S: 'static> Runtime<S> {
                 && let Some((a, f)) = byte_at(&edit.text[base..], anchor).zip(byte_at(&edit.text[base..], focus)) {
                 edit.anchor = base + a; edit.focus = base + f;
                 edit.snap_to_pills();
+                accepted = true;
             }
             EditOutcome::default()
         }, &mut tx);
         if composing_before || event["kind"] == "preedit" { self.ime_eat_key_up = true; }
         if changed { self.dirty = true; }
         merge(&mut self.pending, tx);
+        accepted
     }
 }

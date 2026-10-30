@@ -81,6 +81,12 @@ handler: permission and transient-activation rules still apply. Native Paste eve
 without an asynchronous clipboard read. Secret-copy requests report failure because the
 browser cannot promise native clipboard-history exclusion or conditional timed clearing.
 
+Ordinary paste keeps the browser's native insertion sequence. Rune applies the captured
+selection through `TextEdit::paste`, retaining its sanitization, undo and callbacks.
+Custom handlers, rich HTML and image-only clipboard contents use the model-owned paste path
+when needed. If the editor context or edit authority changes, Rune rejects the paste and
+restores the native editor from the model.
+
 `rune::web::open_url` accepts HTTP(S) and mail links and opens a tab with `noopener,noreferrer`.
 Call it from a user input handler. `Cx::safe_area()` returns top/right/bottom/left insets in
 points (zero on native). Apply them inside a full-canvas background. The canvas follows
