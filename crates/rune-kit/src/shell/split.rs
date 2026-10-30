@@ -4,11 +4,11 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use rune::{Anim, Color, Curve, Cursor, Drag, Easing, El, Phase, Spring, Transition, Tx, col, el, row};
+use rune::{Anim, Color, Curve, Cursor, Drag, Easing, El, Phase, Spring, Transition, Tx, col, el, icon, row};
 
-use super::pane::{PaneMotion, PaneState, Peek, SidebarPeek};
+use super::pane::{PaneMotion, PaneState, Peek, SidebarPeek, StepMenu};
 use super::toolbar::{TOOLBAR_HEIGHT, Toolbar};
-use crate::{ControlSize, IconButton, IconButtonVariant, Kit};
+use crate::{ControlSize, IconButton, IconButtonVariant, Kit, Menu, MenuItem};
 
 type Apply = Box<dyn FnOnce(El) -> El>;
 /// Delayed hover on an element: `(e, enter, leave, peek)` peeks the sidebar once the pointer
@@ -17,6 +17,13 @@ type Hover = Rc<dyn Fn(El, Duration, Duration, bool) -> El>;
 
 /// The resize grip's width, straddling nothing: it sits inside the pane's edge.
 const GRIP: f32 = 6.0;
+/// One arrow step on a focused grip, in points. Page Up and Page Down are ten of these.
+const KEY_STEP: f32 = 8.0;
+/// The width control the step menu anchors to. It lives in the shell's chrome, not over content.
+const SIDEBAR_WIDTH: &str = "sidebar-width";
+const INSPECTOR_WIDTH: &str = "inspector-width";
+/// [`ControlSize::Regular`] icon button, the space the shell reserves for it.
+const WIDTH_BUTTON: f32 = 24.0;
 
 struct Pane {
     state: PaneState,
@@ -25,6 +32,8 @@ struct Pane {
     toggle: Option<Apply>,
     clear: Option<Apply>,
     hover: Option<Hover>,
+    width_button: Option<Apply>,
+    step_menu: Option<Box<dyn FnOnce(&Kit, &mut Vec<El>)>>,
 }
 
 /// Where the sidebar's toggle button sits and how it looks:
@@ -121,8 +130,10 @@ impl Default for SidebarToggle {
 /// point band across the top is the title bar: it drags the window, its leading end clears the
 /// traffic lights (pass [`Cx::titlebar_inset`], 0 in full screen), and the sidebar's toggle
 /// button sits just past them ([`SidebarToggle`]). Panes resize from their inner edge
-/// (double-click resets the width, dragging below half the minimum collapses) and open and
-/// close together on one spring ([`PaneMotion`]). Under Reduce Motion they snap. Widths and
+/// (double-click resets the width, dragging below half the minimum collapses). The shell
+/// places a width button in the sidebar's title band, and in a chrome row above the
+/// inspector's content, for narrow, widen, and reset; a secondary click on the edge opens
+/// the same menu. Panes open and close together on one spring ([`PaneMotion`]). Under Reduce Motion they snap. Widths and
 /// open states live in the app's [`PaneState`]s. With [`SidebarPeek`], a closed sidebar slides
 /// in over the content while the pointer rests at the window's edge.
 ///
@@ -273,6 +284,7 @@ impl SplitView {
         let mut overlay = None;
         let mut zones = Vec::new();
         let mut clears = Vec::new();
+        let mut menus = Vec::new();
         let header = self.header.take();
         let sidebar = self.sidebar.map(|mut p| {
             let s = p.state;
@@ -340,13 +352,33 @@ impl SplitView {
                 .center_y()
                 .window_drag()
                 .child(el().key("sidebar-titlebar-clear").w((clear - self.padding[0]).max(0.0)).motion(spring));
+            let has_header = header.is_some();
             if let Some(h) = header {
                 band = band.child(row().key("sidebar-header-slot").grow(1.0).min_w(0.0).center_y().child(h));
             }
+            let width_bind = p.width_button.take();
+            let width_button = if open {
+                Some(width_control(k, true, width_bind.expect("sidebar width control")))
+            } else {
+                drop(width_bind);
+                None
+            };
             if toggle && t.in_header {
-                band = band.child(el().key("sidebar-spacer").grow(1.0)).child(el().key("sidebar-toggle-slot").w(side).ml(8.0));
+                band = band.child(el().key("sidebar-spacer").grow(1.0));
+                if let Some(button) = width_button {
+                    band = band.child(button);
+                }
+                band = band.child(el().key("sidebar-toggle-slot").w(side).ml(8.0));
+            } else if let Some(button) = width_button {
+                if !has_header {
+                    band = band.child(el().key("sidebar-titlebar-spacer").grow(1.0));
+                }
+                band = band.child(button.mr(GRIP));
             }
-            let content = Contents { pad: self.padding, slide: self.slide || peek.is_some(), peek, band: Some(band) };
+            let content = Contents { pad: self.padding, slide: self.slide || peek.is_some(), peek, band: Some(band), width_button: None };
+            if let Some(menu) = p.step_menu.take() {
+                menus.push(menu);
+            }
             dock(&d, "sidebar-pane", p, true, content)
         });
         let toolbar = self
@@ -376,7 +408,18 @@ impl SplitView {
             if let Some(c) = p.clear.take() {
                 clears.push(c);
             }
-            let content = Contents { pad: [0.0; 2], slide: false, peek: None, band: None };
+            if let Some(menu) = p.step_menu.take() {
+                menus.push(menu);
+            }
+            let open = p.state.is_open();
+            let width_bind = p.width_button.take();
+            let width_button = if open {
+                Some(width_control(k, false, width_bind.expect("inspector width control")))
+            } else {
+                drop(width_bind);
+                None
+            };
+            let content = Contents { pad: [0.0; 2], slide: false, peek: None, band: None, width_button };
             below = below.child(dock(&d, "inspector-pane", p, false, content));
         }
         let strip = self.in_panel.then(|| el().key("titlebar-strip").w_full().h(self.frame).window_drag());
@@ -392,7 +435,11 @@ impl SplitView {
         for clear in clears {
             root = clear(root);
         }
-        root
+        let mut layer = Vec::new();
+        for menu in menus {
+            menu(k, &mut layer);
+        }
+        root.children(layer)
     }
 }
 
@@ -483,6 +530,67 @@ impl Page {
     }
 }
 
+fn pane_step_menu<S: 'static>(
+    anchor: StepMenu,
+    access: fn(&mut S) -> &mut PaneState,
+    sign: f32,
+    key: &'static str,
+    control: &'static str,
+) -> Box<dyn FnOnce(&Kit, &mut Vec<El>)> {
+    Box::new(move |k, layer| {
+        let glyph = |turn: f32| icon(k.glyph.chevron_down, 14.0).icon_rotation(turn);
+        let right = -std::f32::consts::FRAC_PI_2;
+        let left = std::f32::consts::FRAC_PI_2;
+        let (narrow_turn, widen_turn) = if sign > 0.0 { (left, right) } else { (right, left) };
+        let step = {
+            let access = access;
+            move |delta: f32| {
+                let access = access;
+                move |s: &mut S| {
+                    let p = access(s);
+                    if p.is_open() {
+                        p.set_width(p.width() + sign * delta * KEY_STEP);
+                    }
+                    p.set_step_menu(None);
+                }
+            }
+        };
+        let menu = Menu::new(key)
+            .open(true)
+            .item(MenuItem::new("Narrow").lead(glyph(narrow_turn)).on_select(step(-sign)))
+            .item(MenuItem::new("Widen").lead(glyph(widen_turn)).on_select(step(sign)))
+            .item(MenuItem::new("Reset").on_select({
+                let access = access;
+                move |s: &mut S| {
+                    let p = access(s);
+                    p.reset_width();
+                    p.set_step_menu(None);
+                }
+            }))
+            .on_close({
+                let access = access;
+                move |s: &mut S| access(s).set_step_menu(None)
+            });
+        let menu = match anchor {
+            StepMenu::At(point) => menu.at(point.x, point.y),
+            StepMenu::Control => menu.beside(control),
+        };
+        let _ = menu.build(k, layer);
+    })
+}
+
+fn width_control(k: &Kit, leading: bool, bind: Apply) -> El {
+    let button = IconButton::new(k.glyph.chevron_down)
+        .variant(IconButtonVariant::GhostMuted)
+        .control_size(ControlSize::Regular)
+        .label(if leading { "Sidebar width" } else { "Inspector width" })
+        .help("Narrow, widen, or reset")
+        .build(k)
+        .key(if leading { SIDEBAR_WIDTH } else { INSPECTOR_WIDTH })
+        .transition(Transition::none());
+    bind(button)
+}
+
 /// Handlers for a pane's grip and toggle, typed by the app's state.
 fn pane<S: 'static>(state: PaneState, access: fn(&mut S) -> &mut PaneState, content: El, sign: f32, toggle: bool) -> Pane {
     let drag: Apply = Box::new(move |e: El| {
@@ -508,9 +616,31 @@ fn pane<S: 'static>(state: PaneState, access: fn(&mut S) -> &mut PaneState, cont
             }
         })
         .on_double_press(move |s: &mut S| access(s).reset_width())
+        .on_secondary_press(move |s: &mut S, point, _| access(s).set_step_menu(Some(point)))
+    });
+    let keys: Apply = Box::new(move |e: El| {
+        e.on_step(move |s: &mut S, delta, tx: &mut Tx| {
+            tx.instant();
+            let p = access(s);
+            if p.is_open() {
+                p.set_width(p.width() + sign * delta as f32 * KEY_STEP);
+            }
+        })
+        .on_step_limit(move |s: &mut S, max, tx: &mut Tx| {
+            tx.instant();
+            let p = access(s);
+            if p.is_open() {
+                p.set_width(if max { p.max_width() } else { p.min_width() });
+            }
+        })
     });
     let toggle: Option<Apply> =
         toggle.then(|| Box::new(move |e: El| e.on_press(move |s: &mut S| access(s).toggle())) as Apply);
+    // Not a Tab stop (`tab_index -1`): the list's first Tab stays the selected row. Still
+    // focusable, so dismissing the menu can return here. The press is not on the grip.
+    let width_button: Option<Apply> = Some(Box::new(move |e: El| {
+        e.tab_index(-1).on_press(move |s: &mut S| access(s).open_step_control())
+    }));
     // If a drag's release is lost (window blur, pointer cancel), clear `resizing` on blur or the
     // next uncaptured pointer move. During a live drag, `Action::Drag(Phase::Move)` runs right
     // after `Action::PointerMove` in the same frame and keeps `resizing` set. Blur also ends a
@@ -535,7 +665,9 @@ fn pane<S: 'static>(state: PaneState, access: fn(&mut S) -> &mut PaneState, cont
             })
         }) as Hover
     });
-    Pane { state, content, handlers: vec![drag], toggle, clear, hover }
+    let (menu_key, control_key) = if sign > 0.0 { ("sidebar-step", SIDEBAR_WIDTH) } else { ("inspector-step", INSPECTOR_WIDTH) };
+    let step_menu = state.step_menu().map(|anchor| pane_step_menu(anchor, access, sign, menu_key, control_key));
+    Pane { state, content, handlers: vec![drag, keys], toggle, clear, hover, width_button, step_menu }
 }
 
 const DOT_FADE: f32 = 0.15;
@@ -554,6 +686,7 @@ struct Contents {
     slide: bool,
     peek: Option<SidebarPeek>,
     band: Option<El>,
+    width_button: Option<El>,
 }
 
 /// The pane's slot: its width springs between 0 and the pane's width while the content keeps
@@ -620,9 +753,21 @@ fn dock(d: &Dock, key: &str, p: Pane, leading: bool, content: Contents) -> El {
     if floating {
         body = body.raise();
     }
-    let body = body
-        .children(content.band)
-        .child(col().key("pane-body").w_full().grow(1.0).min_h(0.0).child(p.content.w_full().h_full()));
+    let mut body = body.children(content.band);
+    if let Some(button) = content.width_button {
+        // Inspector chrome, in flow above authored content and clear of the grip.
+        body = body.child(
+            row()
+                .key("inspector-width-chrome")
+                .w_full()
+                .h(WIDTH_BUTTON)
+                .pl(GRIP)
+                .center_y()
+                .transition(Transition::none())
+                .child(button),
+        );
+    }
+    let body = body.child(col().key("pane-body").w_full().grow(1.0).min_h(0.0).child(p.content.w_full().h_full()));
     let mut slot = el().key(key).w(s.shown_width()).h_full().motion(spring).child(body);
     if !floating {
         slot = slot.clip_soft(0.0);
@@ -644,11 +789,17 @@ fn dock(d: &Dock, key: &str, p: Pane, leading: bool, content: Contents) -> El {
             .key(if leading { "sidebar-grip" } else { "inspector-grip" })
             .role("separator")
             .label(if leading { "Resize sidebar" } else { "Resize inspector" })
+            .help("Drag to resize")
             .w(GRIP)
             .cursor(Cursor::ResizeColumn)
             .fill(Color::TRANSPARENT)
             .opacity(0.02)
             .transition(Transition::none());
+        let min = s.min_width();
+        let max = s.max_width();
+        let width = s.width();
+        let value = if width.is_finite() { width.round().clamp(min, max) } else { width };
+        grip = grip.value_range(value, min..=max).orientation(rune::Axis::Vertical).controls(key);
         grip = if leading { grip.pin(None, Some(0.0), Some(0.0), Some(0.0)) } else { grip.pin(Some(0.0), Some(0.0), None, Some(0.0)) };
         if floating {
             grip = grip.raise();

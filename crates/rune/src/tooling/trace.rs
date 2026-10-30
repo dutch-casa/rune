@@ -301,8 +301,35 @@ pub(crate) fn tree_json<S>(rt: &Runtime<S>, real_t: f64) -> Value {
             if let Some(x) = e.expanded {
                 v["expanded"] = x.into();
             }
+            if let Some(checked) = e.checked {
+                v["checked"] = checked.into();
+            }
+            if e.mixed {
+                v["mixed"] = true.into();
+            }
+            if e.disabled {
+                v["disabled"] = true.into();
+            }
+            if e.invalid {
+                v["invalid"] = true.into();
+            }
+            if let Some(range) = e.range {
+                v["range"] = json!({"value": range.value, "min": range.min, "max": range.max});
+            }
             if e.item_selected {
                 v["itemSelected"] = true.into();
+            }
+            if e.item_cursor {
+                v["itemCursor"] = true.into();
+            }
+            if let Some(path) = &e.controls {
+                v["controls"] = path.clone().into();
+            }
+            if let Some(axis) = e.orientation {
+                v["orientation"] = match axis {
+                    crate::Axis::Horizontal => "horizontal",
+                    crate::Axis::Vertical => "vertical",
+                }.into();
             }
             if rt.element_is_secure(&e.path) {
                 v["secure"] = true.into();

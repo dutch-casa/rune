@@ -425,6 +425,10 @@ impl<S: 'static> Runtime<S> {
                     level: None,
                     expanded: None,
                     item_selected: false,
+                    checked: None,
+                    mixed: false,
+                    invalid: false,
+                    range: None,
                     ..text.clone()
                 });
             }
@@ -551,6 +555,10 @@ impl<S: 'static> Runtime<S> {
                     level: None,
                     expanded: None,
                     item_selected: false,
+                    checked: None,
+                    mixed: false,
+                    invalid: false,
+                    range: None,
                     ..text.clone()
                 });
             }

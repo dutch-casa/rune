@@ -99,14 +99,17 @@ impl RadioItem {
             let color = if disabled { c.text_faint } else { c.text_muted };
             words = words.child(text(d.clone()).key("description").font(k.ty.small.lh(11.0)).color(color));
         }
-        let root = row()
+        let mut root = row()
             .role("radio")
             .checked(self.checked)
-            .label(self.label)
+            .label(self.label.clone())
             .gap(8.0)
             .items_start()
             .child(el().key("stack").size(16.0, 20.0).child(control))
             .child(words);
+        if self.invalid {
+            root = root.invalid(true);
+        }
         self.acts.apply(root.focusable(!disabled).focus_selected(self.checked), !disabled)
     }
 }
@@ -147,9 +150,11 @@ impl RadioGroup {
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
         let mut root = col().role("radiogroup").focus_group().gap(8.0);
+        if self.invalid {
+            root = root.invalid(true);
+        }
         if let Some(l) = &self.label {
-            root =
-                root.label(l.clone()).child(text(l.clone()).key("label").font(k.ty.small.lh(11.0)).color(c.text_faint));
+            root = root.label(l.clone()).child(text(l.clone()).key("label").font(k.ty.small.lh(11.0)).color(c.text_faint));
         }
         if let Some(d) = &self.description {
             root = root.child(text(d.clone()).key("description").font(k.ty.small.lh(13.2)).color(c.text_faint));

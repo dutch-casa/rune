@@ -282,6 +282,11 @@ fn multi_select_extends_with_shift_and_toggles_with_cmd() {
     press_with(&mut rt, Key::Down, Mods { shift: true, ..Mods::default() });
     press_with(&mut rt, Key::Down, Mods { shift: true, ..Mods::default() });
     assert_eq!(rt.state.files.selected().collect::<Vec<_>>(), ["assets", "assets/icon2.png", "assets/icon10.png"]);
+    let cursor_id = rt.state.files.cursor().unwrap().to_owned();
+    assert_ne!(cursor_id, "assets", "shift-extend leaves the cursor on the end, not the first selected row");
+    let marked = rows(&rt).into_iter().filter(|e| e.item_cursor).filter_map(|e| e.key).collect::<Vec<_>>();
+    assert_eq!(marked, [cursor_id]);
+    assert!(rows(&rt).iter().any(|e| e.key.as_deref() == Some("assets") && e.item_selected && !e.item_cursor));
     let r = rows(&rt).into_iter().find(|e| e.label.as_deref() == Some("lib.rs")).unwrap().rect;
     rt.physical_input(PhysicalInput::Modifiers(Mods { cmd: true, ..Mods::default() }));
     rt.pointer_down(r[0] + 40.0, r[1] + 5.0);

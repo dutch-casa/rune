@@ -5,7 +5,7 @@ use std::borrow::Cow;
 
 use rune::runtime::ElementInfo;
 use rune::{TextStyle, Chrome, Cx, El, Env, Key, KeyEvent, Mods, Runtime, TextEdit, TitlebarAction, col, el};
-use rune_kit::shell::{Page, PaneState, Sidebar, SidebarRow, SidebarSection, SplitView, Toolbar, is_sidebar_toggle};
+use rune_kit::shell::{Page, PaneState, Sidebar, SidebarHeader, SidebarRow, SidebarSection, SplitView, Toolbar, is_sidebar_toggle};
 use rune_kit::{Button, IconButton, Kit, glyphs};
 
 const NAMES: [&str; 4] = ["Alpha", "Bravo", "Charlie", "Delta"];
@@ -268,7 +268,8 @@ fn roles_and_labels_describe_the_shell() {
     let role = |key: &str| all.iter().find(|e| e.key.as_deref() == Some(key)).map(|e| (e.role, e.label.clone()));
     assert_eq!(role("sidebar-list"), Some(("list", Some("Sessions".into()))));
     assert_eq!(role("row2"), Some(("listitem", Some("Charlie".into()))));
-    assert_eq!(role("section-header"), Some(("button", Some("Today, expanded".into()))));
+    let header = all.iter().find(|e| e.key.as_deref() == Some("section-header")).unwrap();
+    assert_eq!((header.role, header.label.as_deref(), header.expanded), ("button", Some("Today"), Some(true)));
     assert_eq!(role("toolbar").map(|r| r.0), Some("toolbar"));
     assert_eq!(role("sidebar-grip"), Some(("separator", Some("Resize sidebar".into()))));
     assert_eq!(role("sidebar-toggle"), Some(("button", Some("Hide sidebar".into()))));
@@ -283,7 +284,8 @@ fn roles_and_labels_describe_the_shell() {
     rt.pointer_up(x, y);
     settle(&mut rt);
     assert!(rt.state.collapsed);
-    assert_eq!(find(&rt, "section-header").label.as_deref(), Some("Today, collapsed"));
+    let header = find(&rt, "section-header");
+    assert_eq!((header.label.as_deref(), header.expanded), (Some("Today"), Some(false)));
     assert!(rt.find("row0").is_none(), "a collapsed section hides its rows");
 }
 
@@ -857,4 +859,165 @@ fn select_only_rows_skip_tab_and_keep_an_outside_field_focused() {
     rt.frame(1.0 / 60.0);
     assert_eq!(focused(&rt), ["input"], "selection change never pulls focus from the field");
     assert!(row(&rt, 0).item_selected && !row(&rt, 2).item_selected);
+}
+
+#[test]
+fn left_collapses_a_section_and_the_collapsed_stop_expands_it() {
+    let mut rt = runtime(state());
+    let focused = |rt: &Runtime<S>| rt.elements().into_iter().find(|e| e.focused).and_then(|e| e.key);
+    press(&mut rt, Key::Tab);
+    assert_eq!(focused(&rt).as_deref(), Some("row1"));
+    let header = find(&rt, "section-header");
+    assert!(!header.focusable, "the header button stays out of the arrow ring");
+    assert_eq!(header.expanded, Some(true));
+    press(&mut rt, Key::Left);
+    assert!(rt.state.collapsed);
+    rt.frame(0.0);
+    let mut saw = false;
+    for _ in 0..8 {
+        press(&mut rt, Key::Tab);
+        if focused(&rt).as_deref() == Some("section-toggle") {
+            saw = true;
+            break;
+        }
+    }
+    assert!(saw, "a collapsed section is its own stop");
+    assert_eq!(find(&rt, "section-toggle").expanded, Some(false));
+    press(&mut rt, Key::Text(" ".into()));
+    assert!(!rt.state.collapsed);
+}
+
+#[test]
+fn delete_on_a_focused_row_runs_its_close() {
+    struct C { closed: bool }
+    fn view(_: &C, _: &mut Cx<C>) -> El {
+        let k = Kit::neutral(true);
+        Sidebar::new().section(
+            SidebarSection::new("Today").row(
+                SidebarRow::new("Alpha").selected(true).on_close(|s: &mut C, _| s.closed = true).build(&k).key("row"),
+            ),
+        ).build(&k)
+    }
+    let mut rt = Runtime::new(C { closed: false }, view, (240.0, 200.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt.key(KeyEvent { key: Key::Tab, mods: Mods::default() });
+    rt.frame(1.0 / 60.0);
+    let close = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("close")).unwrap();
+    assert!(!close.focusable);
+    rt.key(KeyEvent { key: Key::Delete, mods: Mods::default() });
+    rt.frame(1.0 / 60.0);
+    assert!(rt.state.closed);
+}
+
+#[test]
+fn arrows_on_the_grip_step_the_pane_width() {
+    let mut rt = runtime(state());
+    let focused = |rt: &Runtime<S>| rt.elements().into_iter().find(|e| e.focused).and_then(|e| e.key);
+    let mut saw = false;
+    for _ in 0..12 {
+        press(&mut rt, Key::Tab);
+        if focused(&rt).as_deref() == Some("sidebar-grip") {
+            saw = true;
+            break;
+        }
+    }
+    assert!(saw, "Tab reaches the resize grip");
+    assert_eq!(find(&rt, "sidebar-grip").role, "separator");
+    let before = rt.state.sidebar.width();
+    press(&mut rt, Key::Right);
+    assert_eq!(rt.state.sidebar.width(), before + 8.0);
+    press(&mut rt, Key::Home);
+    assert_eq!(rt.state.sidebar.width(), rt.state.sidebar.min_width());
+    let grip = find(&rt, "sidebar-grip");
+    let range = grip.range.expect("the grip exposes its real width");
+    assert_eq!((range.value, range.min, range.max), (rt.state.sidebar.width(), rt.state.sidebar.min_width(), rt.state.sidebar.max_width()));
+    assert_eq!(grip.orientation, Some(rune::Axis::Vertical));
+    assert_eq!(grip.controls.as_deref(), Some(find(&rt, "sidebar-pane").path.as_str()));
+}
+
+#[test]
+fn a_secondary_click_on_the_grip_narrows_without_dragging() {
+    let mut rt = runtime(state());
+    let before = rt.state.sidebar.width();
+    let (x, y) = rt.find("sidebar-grip").unwrap();
+    rt.secondary_down(x, y);
+    rt.secondary_up(x, y);
+    settle(&mut rt);
+    let narrow = rt.elements().into_iter().find(|e| e.role == "menuitem" && e.label.as_deref() == Some("Narrow")).expect("the step menu");
+    let (nx, ny) = (narrow.rect[0] + narrow.rect[2] * 0.5, narrow.rect[1] + narrow.rect[3] * 0.5);
+    rt.pointer_down(nx, ny);
+    rt.pointer_up(nx, ny);
+    rt.frame(0.0);
+    assert_eq!(rt.state.sidebar.width(), before - 8.0);
+    assert!(rt.elements().iter().all(|e| e.role != "menu" || e.exiting), "choosing an item closes the menu");
+}
+
+#[test]
+fn a_primary_tap_on_the_width_button_narrows_without_dragging() {
+    let mut rt = runtime(state());
+    let before = rt.state.sidebar.width();
+    let grip = find(&rt, "sidebar-grip");
+    let width = find(&rt, "sidebar-width");
+    assert_eq!(width.role, "button");
+    press(&mut rt, Key::Tab);
+    assert_eq!(
+        rt.elements().into_iter().find(|e| e.focused).and_then(|e| e.key).as_deref(),
+        Some("row1"),
+        "the width control is not a Tab stop"
+    );
+    assert!(width.rect[2] >= 23.5 && width.rect[3] >= 23.5, "a real tap target");
+    assert!(width.rect[0] + width.rect[2] <= grip.rect[0] + 0.5, "beside the grip, not on it");
+
+    let (x, y) = (grip.rect[0] + grip.rect[2] * 0.5, grip.rect[1] + grip.rect[3] * 0.5);
+    rt.pointer_move(x, y);
+    rt.pointer_down(x, y);
+    rt.pointer_move(x + 40.0, y);
+    rt.frame(1.0 / 60.0);
+    assert_eq!(rt.state.sidebar.width(), before + 40.0, "a drag still follows the pointer");
+    rt.pointer_up(x + 40.0, y);
+    rt.frame(0.0);
+    assert!(rt.elements().iter().all(|e| e.role != "menu"), "finishing a drag does not open the step menu");
+
+    let (x, y) = rt.find("sidebar-width").unwrap();
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    settle(&mut rt);
+    assert_eq!(rt.state.sidebar.width(), before + 40.0, "the tap itself does not drag");
+    let narrow = rt.elements().into_iter().find(|e| e.role == "menuitem" && e.label.as_deref() == Some("Narrow")).expect("the step menu");
+    let (nx, ny) = (narrow.rect[0] + narrow.rect[2] * 0.5, narrow.rect[1] + narrow.rect[3] * 0.5);
+    rt.pointer_down(nx, ny);
+    rt.pointer_up(nx, ny);
+    rt.frame(0.0);
+    assert_eq!(rt.state.sidebar.width(), before + 32.0);
+    assert!(rt.elements().iter().all(|e| e.role != "menu" || e.exiting), "choosing an item closes the menu");
+}
+
+#[test]
+fn a_virtual_header_toggle_keeps_focus_independent_of_the_selected_row() {
+    fn view(_: &bool, _: &mut Cx<bool>) -> El {
+        let k = Kit::neutral(true);
+        let rows = k.clone();
+        col().w_full().h_full().child(
+            Sidebar::new().virtual_rows(2, |_: &bool, i| Cow::Owned(if i == 0 { "head".into() } else { "row".into() }), move |collapsed, i| {
+                if i == 0 {
+                    SidebarHeader::new("Today").collapsed(*collapsed).on_toggle(|c: &mut bool, _| *c = !*c).build(&rows)
+                } else {
+                    SidebarRow::new("Alpha").selected(!*collapsed).on_select(|_: &mut bool, _| {}).build(&rows).key("alpha")
+                }
+            }).build(&k),
+        )
+    }
+    let mut rt = Runtime::new(false, view, (240.0, 300.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    rt.frame(0.0);
+    let header = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("head")).expect("virtual header").path;
+    rt.key(KeyEvent { key: Key::Tab, mods: Mods::default() });
+    rt.frame(1.0 / 60.0);
+    assert!(rt.elements().iter().any(|e| e.focused && e.path.starts_with(&header)), "Tab reaches the standalone header");
+    rt.key(KeyEvent { key: Key::Left, mods: Mods { shift: true, ..Mods::default() } });
+    rt.frame(0.0);
+    assert!(!rt.state, "a modified Left does not collapse");
+    rt.key(KeyEvent { key: Key::Left, mods: Mods::default() });
+    rt.frame(0.0);
+    assert!(rt.state, "Left on the expanded stop collapses it");
 }

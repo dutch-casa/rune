@@ -10,6 +10,8 @@ pub(crate) struct FocusSpec {
     pub order: i32,
     pub group: bool,
     pub selected: bool,
+    /// Keyboard cursor, distinct from [`El::focus_selected`].
+    pub cursor: bool,
     pub reveal_selected: bool,
     pub preserve_on_press: crate::runtime::selectable::OnPress,
     pub ring: Option<Outline>,
@@ -38,6 +40,7 @@ impl crate::cold::Empty for FocusSpec {
         group: false,
         selected: false,
         reveal_selected: false,
+        cursor: false,
         preserve_on_press: crate::runtime::selectable::OnPress { focus: false, selection: false },
         ring: None,
         ring_off: false,
@@ -50,4 +53,15 @@ impl crate::cold::Empty for FocusSpec {
         key_up: None,
         key: None,
     };
+}
+
+impl crate::El {
+    /// Mark the keyboard cursor. This is not selection ([`El::focus_selected`]).
+    ///
+    /// A list, tree, grid, or popup sets it on the row the arrow keys would move from.
+    /// The inspector reports it as [`crate::ElementInfo::item_cursor`].
+    pub fn focus_cursor(mut self, cursor: bool) -> Self {
+        self.focus.cursor = cursor;
+        self
+    }
 }

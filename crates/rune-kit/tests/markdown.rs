@@ -212,7 +212,13 @@ fn tables_parse_alignment_inline_cells_and_ragged_rows() {
 
     let rt = laid_out(TABLE);
     let (th, r0) = (by_key(&rt, "th"), by_key(&rt, "r0"));
-    assert!(th.rect[1] < r0.rect[1]);
+    assert_eq!((th.role, r0.role), ("row", "row"));
+    assert!(rt.elements().iter().any(|e| e.role == "table"));
+    assert!(rt.elements().iter().any(|e| e.role == "columnheader" && e.key.as_deref() == Some("c0")));
+    assert!(rt.elements().iter().any(|e| e.role == "cell" && e.path.ends_with("r0/c0")));
+    for key in ["s0", "s1"] {
+        assert_eq!(by_key(&rt, key).role, "none", "{key} stays presentational so rows stay in the table");
+    }
     let texts: Vec<_> = rt.elements().into_iter().filter_map(|e| e.text).collect();
     for want in ["Name", "Count", "Note", "a", "1", "x", "b"] {
         assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");

@@ -20,7 +20,7 @@ use crate::tok::TextStyle;
 pub use crate::el::tx::{Shell, Tx};
 pub(crate) use crate::el::tx::{SelectRequest, TraceCalls};
 
-mod a11y;
+pub(crate) mod a11y;
 mod anchor;
 mod backdrop;
 mod child_exit;
@@ -128,31 +128,9 @@ pub(crate) type DragOutFn = Rc<dyn Fn(crate::states::StatesRef<'_>) -> Option<cr
 pub(crate) type DragEndFn = Rc<dyn Fn(crate::states::States<'_>, crate::DragOutcome, &mut Tx)>;
 pub(crate) type EditFn = Rc<dyn for<'a> Fn(crate::states::States<'a>) -> &'a mut TextEdit>;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct CheckState {
-    pub checked: bool,
-    pub indeterminate: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum LabelSource {
-    Fallback,
-    Composed,
-    #[default]
-    Explicit,
-}
-
-/// Accessibility state beyond role and label (`El::level`, `El::expanded`, `El::secure`).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct A11y {
-    pub level: Option<u32>,
-    pub expanded: Option<bool>,
-    pub secure: bool,
-    pub disabled: bool,
-    pub label_source: LabelSource,
-    pub checked: Option<CheckState>,
-}
-
+pub(crate) use crate::el::a11y::A11y;
+pub use crate::el::a11y::Axis;
+pub use crate::el::a11y::ValueRange;
 pub(crate) use crate::el::focus::FocusSpec;
 pub(crate) use crate::el::handler_set::Handlers;
 pub use crate::el::visual::{Visual, VisualCold};
@@ -522,7 +500,7 @@ pub struct El {
     /// `El::aspect_fit`'s width over height; 0 when unset.
     pub(crate) aspect_fit: f32,
     pub(crate) selection_group: bool,
-    /// `El::level` and `El::expanded`.
+    /// `El::level`, `El::expanded`, `El::value_range` and `El::invalid`.
     pub(crate) a11y: A11y,
     pub(crate) inert: bool,
 }

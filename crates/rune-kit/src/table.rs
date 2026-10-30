@@ -551,6 +551,7 @@ impl<S: 'static> Table<S> {
                 .key(id.to_string())
                 .role("row")
                 .focus_selected(selected)
+                .focus_cursor(st.cursor.as_deref() == Some(id.as_ref()))
                 .w_full()
                 .h(style.row_height)
                 .center_y();
@@ -614,8 +615,9 @@ impl<S: 'static> Table<S> {
                 st.row_height = style.row_height;
             })
             .child(rows);
+        let grid_key = state.key.clone();
         let mut root = col()
-            .key(state.key.clone())
+            .key(grid_key.clone())
             .role("grid")
             .focusable(true)
             .w_full()
@@ -625,6 +627,9 @@ impl<S: 'static> Table<S> {
         }
         root
             .on_key(move |s: &mut S, ev: &KeyEvent, tx: &mut Tx| {
+                if tx.focused() != Some(grid_key.as_str()) {
+                    return false;
+                }
                 let n = len(s);
                 let mut st = std::mem::take(get_mut(s));
                 let out = st.handle_key(ev, n, &|j| row_id(s, j), tx);
@@ -738,7 +743,7 @@ fn header_row<S: 'static>(
         if c.sortable {
             let id = c.id.clone();
             let on_sort = on_sort.clone();
-            cell = cell.cursor(Cursor::Pointer).hover(k.c.hover).on_press_tx(move |s: &mut S, tx: &mut Tx| {
+            cell = cell.focusable(true).cursor(Cursor::Pointer).hover(k.c.hover).on_press_tx(move |s: &mut S, tx: &mut Tx| {
                 let st = get_mut(s);
                 let dir = st.next_sort(&id);
                 st.set_sort(id.clone(), dir);

@@ -6,6 +6,10 @@ use winit::keyboard::ModifiersState;
 extern "C" {
     fn sync(handle: &JsValue, key: &str, text: &str, base: usize, anchor: u32, focus: u32, secure: bool);
 }
+#[wasm_bindgen(module = "/src/platform/web/text_view.js")]
+extern "C" {
+    fn linked();
+}
 
 
 #[wasm_bindgen(module = "/src/platform/web/bridge.js")]
@@ -60,6 +64,7 @@ impl Bridge {
             }
         });
         let dispose_viewport = platform::viewport(canvas, callback.as_ref().unchecked_ref(), embedded);
+        linked();
         let handle = mount(canvas, callback.as_ref().unchecked_ref(), embedded, fit_height);
         Self { handle, _callback: callback, dispose_viewport, mods: ModifiersState::empty(),
             touch: None, mirror: Default::default(), a11y: Default::default(),

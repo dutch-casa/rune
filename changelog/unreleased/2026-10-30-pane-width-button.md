@@ -1,0 +1,1 @@
+- A pane's width button opens narrow, widen, and reset on a primary click. On a sidebar it sits in the shell's title band; on an inspector, in a chrome row above the pane's content. It does not cover authored controls. Dragging the grip, double-click reset, and a secondary click on the grip are unchanged.

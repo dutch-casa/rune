@@ -191,12 +191,12 @@ fn option_changes_land_at_once_by_default() {
 fn active_index_scrolls_into_view_and_updates_listbox_accessibility() {
     let mut rt = runtime(40);
     let find = |rt: &Runtime<State>, key: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key));
-    let listbox = find(&rt, "viewport").unwrap();
+    let listbox = find(&rt, "commands-listbox").unwrap();
     assert_eq!(listbox.role, "listbox");
     assert_eq!(listbox.label.as_deref(), Some("Commands"));
     let first = find(&rt, "commands-option-cmd-0").unwrap();
     assert_eq!(first.role, "option");
-    assert!(first.item_selected);
+    assert!(first.item_selected && first.item_cursor);
 
     // Moving active to the last item (via Up key in the outside field) reveals the offscreen row.
     rt.key(KeyEvent { key: Key::Up, mods: Mods::default() });
@@ -204,8 +204,8 @@ fn active_index_scrolls_into_view_and_updates_listbox_accessibility() {
     assert_eq!(rt.state.active, Some(39));
     let last = find(&rt, "commands-option-cmd-39").expect("active virtual row is mounted and revealed");
     assert!(last.visible[3] > 0.0, "last row visible rect {:?}", last.visible);
-    assert!(last.item_selected);
-    let listbox = find(&rt, "viewport").unwrap();
+    assert!(last.item_selected && last.item_cursor);
+    let listbox = find(&rt, "commands-listbox").unwrap();
     assert_eq!(listbox.label.as_deref(), Some("Commands"));
 }
 
@@ -229,7 +229,7 @@ fn hover_fires_on_active_click_fires_on_choose_and_outside_text_edit_keeps_focus
     assert_eq!(rt.state.hovered, [2]);
     assert_eq!(rt.state.active, Some(2));
     assert_eq!(
-        rt.elements().into_iter().find(|e| e.key.as_deref() == Some("viewport")).unwrap().label.as_deref(),
+        rt.elements().into_iter().find(|e| e.key.as_deref() == Some("commands-listbox")).unwrap().label.as_deref(),
         Some("Commands")
     );
 

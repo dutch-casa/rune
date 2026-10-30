@@ -147,6 +147,9 @@ impl<S: 'static> ShortcutRecorder<S> {
             .w(self.width).h(32.0).px(8.0).center_y().radius(k.radius.md)
             .fill(k.c.bg_base).border(1.0, border).focusable(!self.disabled)
             .focus_ring(2.0, 2.0, k.c.border_focus);
+        if let Some(error) = &self.state.error {
+            control = control.invalid(true).help((self.message)(error, self.state.refused.as_ref()));
+        }
         control = control.child(if labels.is_empty() { text(placeholder).font(k.ty.ui_compact).color(k.c.text_faint) }
             else { Keybind::new(&labels).build(k) });
         if !self.disabled {

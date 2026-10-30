@@ -24,17 +24,20 @@ function replacement(old, next, composition, caret) {
     return { start, end, text: next.slice(start, nextEnd) };
 }
 
-export function createEditor(h, key, secure) {
-    const field = document.createElement(secure ? 'input' : 'textarea');
+export function createEditor(h, key, secure, combobox = false) {
+    const field = document.createElement(secure || combobox ? 'input' : 'textarea');
     if (secure) {
         field.type = 'password';
         field.autocomplete = 'off';
         field.setAttribute('autocorrect', 'off');
         field.setAttribute('autocapitalize', 'off');
         field.spellcheck = false;
+    } else if (combobox) {
+        field.autocomplete = 'off';
+        field.setAttribute('autocapitalize', 'off');
     } else field.setAttribute('autocapitalize', 'sentences');
-    field.inputMode = matchMedia('(pointer: coarse)').matches ? 'none' : 'text';
-    const e = { field, key, secure, value: '', base: 0, composing: false, composition: '', shift: false,
+    field.inputMode = h.textView?.on || !matchMedia('(pointer: coarse)').matches ? 'text' : 'none';
+    const e = { field, key, secure, combobox: !!combobox, value: '', base: 0, composing: false, composition: '', shift: false,
         handledInput: null, syncing: false, disposed: false, listeners: [] };
     const listen = (name, handler) => {
         field.addEventListener(name, handler);
