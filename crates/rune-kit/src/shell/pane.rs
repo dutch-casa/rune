@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use rune::{Anim, Curve, Easing, KeyEvent, Spring, Velocity};
+use rune::{Anim, Curve, Easing, KeyEvent, PointerPress, Spring, Velocity};
 
 use crate::Kit;
 
@@ -21,6 +21,8 @@ pub struct PaneState {
     /// The width and the width it was made with (the default), as asked, before clamping, so a
     /// later `range` can widen to them.
     asked: [f32; 2],
+    /// Where the step menu was opened. Not a width, and not an author field.
+    step_menu: Option<StepMenu>,
 }
 
 /// Where a closed sidebar's peek stands. Kept after it ends, so the view knows which way the
@@ -37,6 +39,15 @@ pub(super) enum Peek {
     Docked,
 }
 
+/// Where the step menu opens. Cleared when it closes or the pane does. Not an author field.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum StepMenu {
+    /// A secondary click, at the pointer.
+    At(PointerPress),
+    /// A primary press on the width button. The menu anchors to that button.
+    Control,
+}
+
 impl PaneState {
     /// Range of a sidebar unless set: 160 to 480 points.
     pub const MIN: f32 = 160.0;
@@ -44,7 +55,7 @@ impl PaneState {
 
     /// An open pane `width` points wide, which double-clicking its edge also returns to.
     pub fn new(width: f32) -> PaneState {
-        let mut p = PaneState { width, open: true, min: Self::MIN, max: Self::MAX, resizing: false, peek: Peek::None, asked: [width; 2] };
+        let mut p = PaneState { width, open: true, min: Self::MIN, max: Self::MAX, resizing: false, peek: Peek::None, asked: [width; 2], step_menu: None };
         p.clamp();
         p
     }
@@ -107,6 +118,7 @@ impl PaneState {
             self.peek = if self.peek == Peek::Shown { Peek::Docked } else { Peek::None };
         } else if !open && self.open {
             self.peek = Peek::None;
+            self.step_menu = None;
         }
         self.open = open;
     }
@@ -155,6 +167,15 @@ impl PaneState {
     /// goes on, so the drag can open it again.
     pub(super) fn set_resizing(&mut self, on: bool) {
         self.resizing = on;
+    }
+    pub(super) fn step_menu(&self) -> Option<StepMenu> {
+        self.step_menu
+    }
+    pub(super) fn set_step_menu(&mut self, point: Option<PointerPress>) {
+        self.step_menu = point.map(StepMenu::At);
+    }
+    pub(super) fn open_step_control(&mut self) {
+        self.step_menu = Some(StepMenu::Control);
     }
 
     fn clamp(&mut self) {

@@ -276,7 +276,7 @@ impl TextInput {
         let style = self.style.unwrap_or(k.ty.ui_compact);
         let base: f32 = if self.large { 32.0 } else { 28.0 };
         let height = self.height.map_or_else(|| base.max(style.line_px() + 12.0), |h| h.max(style.line_px()));
-        let field = text_input(&self.edit, style)
+        let mut field = text_input(&self.edit, style)
             .single_line()
             .key("input")
             .grow(1.0)
@@ -285,6 +285,9 @@ impl TextInput {
             .rich_style(kit_rich_style(k))
             .placeholder(self.placeholder.clone(), hint)
             .caret(ink, k.selection());
+        if self.invalid && !disabled {
+            field = field.invalid(true);
+        }
         let field = self.edits.apply(field, disabled);
         let mut value = row().key("value").grow(1.0).shrink().gap(6.0).center_y();
         if let Some(i) = self.leading {
@@ -451,13 +454,16 @@ impl TextArea {
         let red = self.invalid && !disabled && k.invalid_text;
         let ink = if red { c.danger.fg } else { c.text_base };
         let hint = if red { c.danger.fg } else { c.text_faint };
-        let field = text_input(&self.edit, style)
+        let mut field = text_input(&self.edit, style)
             .key("input")
             .w_full()
             .color(ink)
             .rich_style(kit_rich_style(k))
             .placeholder(self.placeholder.clone(), hint)
             .caret(ink, k.selection());
+        if self.invalid && !disabled {
+            field = field.invalid(true);
+        }
         let field = self.edits.apply(field, disabled);
         let line = style.line_px();
         let mut e = col().role("textbox").fallback_label(self.placeholder.clone()).padding(8.0);
@@ -573,7 +579,7 @@ impl TextField {
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
         let body = TextStyle::new(14.0, 400.0).lh(21.0);
-        let field = text_input(&self.edit, body)
+        let mut field = text_input(&self.edit, body)
             .key("input")
             .label(self.label.clone())
             .grow(1.0)
@@ -582,6 +588,12 @@ impl TextField {
             .rich_style(kit_rich_style(k))
             .placeholder(self.placeholder.clone(), c.text_weak)
             .caret(c.text_strong, k.selection());
+        if self.error.is_some() && self.state != State::Disabled {
+            field = field.invalid(true);
+            if let Some(e) = &self.error {
+                field = field.help(e.clone());
+            }
+        }
         let field = if self.multiline { field } else { field.single_line() };
         let field = self.edits.apply(field, self.state == State::Disabled);
         let mut wrapper = row()

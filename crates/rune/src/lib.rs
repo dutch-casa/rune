@@ -216,6 +216,7 @@ pub use el::{
     Align, Anchor, Cursor, CursorImage, Cycle, Drag, El, GrowthSpec, Outline, Phase, PillStyle, PointerEvent, PointerPress, RadialRadius, ScrollSpec, Shadow, Shell, Side, Tx, anchor_rect, auto_grow, canvas, col, edit_access, effect, el, icon, rich,
     row, spacer, text, text_input,
 };
+pub use el_a11y::{Axis, ValueRange};
 pub use growth::{GROWTH, StreamEdge, edge};
 pub use latest::Latest;
 pub use live::{Live, LiveText, Tween};

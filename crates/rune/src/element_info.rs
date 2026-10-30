@@ -43,7 +43,15 @@ impl Default for ElementInfo {
             selected: None,
             level: None,
             expanded: None,
+            checked: None,
+            mixed: false,
+            disabled: false,
+            invalid: false,
+            range: None,
             item_selected: false,
+            item_cursor: false,
+            controls: None,
+            orientation: None,
             stuck: 0.0,
         }
     }

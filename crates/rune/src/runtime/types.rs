@@ -37,7 +37,7 @@ pub(crate) struct NodeCold {
     pub(super) sticky: Option<Box<crate::el::Sticky>>,
     pub(super) growth: Option<Box<GrowthSpec>>,
     pub(super) glide: Option<rune_motion::Spring>,
-    pub(super) a11y: crate::el::A11y,
+    pub(super) a11y: crate::el_a11y::A11y,
     /// The image ratio this picture's layout took, when it sizes one side from its pixels.
     pub(super) pixel_aspect: Option<f32>,
     /// `El::aspect_fit`: the ratio and the element's own style, which the fitted size replaces.
@@ -71,7 +71,18 @@ impl crate::cold::Empty for NodeCold {
         sticky: None,
         growth: None,
         glide: None,
-        a11y: crate::el::A11y { level: None, expanded: None, secure: false },
+        a11y: crate::el_a11y::A11y {
+            level: None,
+            expanded: None,
+            secure: false,
+            disabled: false,
+            invalid: false,
+            label_source: crate::el_a11y::LabelSource::Explicit,
+            checked: None,
+            range: None,
+            controls: None,
+            orientation: None,
+        },
         pixel_aspect: None,
         aspect_fit: None,
         material: None,

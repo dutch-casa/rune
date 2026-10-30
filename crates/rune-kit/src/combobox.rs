@@ -143,6 +143,8 @@ impl<S: 'static> Combobox<S> {
                 if state.open && let Some(id) = &current { tx.scroll_into_view(format!("{open_key}-option-{id}")); }
             });
         }
+        trigger = trigger.expanded(self.state.open && !self.disabled).controls(format!("{}-listbox", self.key));
+        if self.disabled { trigger = trigger.disabled(true); }
         let mut popover = Popover::new(&self.key).trigger(trigger).placement(self.placement).padding(0.0)
             .open(self.state.open && !self.disabled);
         let access = self.access.clone();
@@ -163,6 +165,7 @@ impl<S: 'static> Combobox<S> {
             .width(None).placeholder(self.search_placeholder);
         // Without it, an edit's commit is instant: the filtered rows and the height land with the text.
         if self.animate_filtering { field = field.animate_edit_layout(); }
+        let list_key = format!("{}-listbox", self.key);
         let field = field
             .on_edit(move |s: &mut S| &mut access(s).search)
             .on_change(move |s: &mut S, tx| {
@@ -210,7 +213,7 @@ impl<S: 'static> Combobox<S> {
                     state.query = state.search.text.clone();
                 }
                 true
-            }).build(k).key("search");
+            }).build(k).key("search").role("combobox").expanded(true).controls(list_key);
         let active_pos = active.and_then(|orig| choices.iter().position(|&c| c == orig));
         let items: Vec<_> = choices.iter().map(|&i| {
             let option = &self.options[i];

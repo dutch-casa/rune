@@ -71,6 +71,7 @@ fn the_body_rows_sit_on_a_raised_card_inset_in_the_frame() {
     let rt = run(SRC, card, 600.0);
     let frame = parent(&rt, "th");
     let (th, tb, tbc) = (by_key(&rt, "th"), by_key(&rt, "tb"), by_key(&rt, "tbc"));
+    assert_eq!((tb.role, tbc.role), ("none", "none"));
     assert_eq!((frame.radius, frame.fill), (6.0, k.c.layer_01));
     assert_eq!((tb.radius, tb.fill), (4.0, k.c.bg_base));
     assert_eq!(parent(&rt, "tb").path, frame.path, "the card is the frame's");

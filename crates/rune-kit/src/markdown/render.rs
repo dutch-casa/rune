@@ -350,6 +350,7 @@ impl Renderer {
             .key(format!("i{k}"))
             .role("checkbox")
             .label(item_label(item))
+            .checked(checked)
             .focus_selected(checked)
             .focusable(interactive)
             .w_full()

@@ -2,8 +2,9 @@
 //! slots, keyboard navigation and an optional virtualised body.
 
 use std::borrow::Cow;
+use std::rc::Rc;
 
-use rune::{Anim, Color, Drag, El, GrowthSpec, Icon, Key, Phase, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text, text_input};
+use rune::{Anim, Color, Drag, El, GrowthSpec, Icon, Key, KeyEvent, Phase, ScrollSpec, TextEdit, TextStyle, Tx, col, el, icon, row, text, text_input};
 
 use super::reorder::Reorder;
 use crate::{ControlSize, IconButton, IconButtonVariant, Kit, Spinner};
@@ -27,10 +28,13 @@ enum Body {
 }
 
 /// A sidebar's content: header, a scrolling list of sections and rows, and footer.
-/// `Sidebar::new().header(..).section(..).footer(..).build(&kit)`. The list is one Tab stop
-/// that lands on the selected row. Up and Down move the selection (it follows focus, as in a
-/// source list), Home and End go to the ends, typing a row's first letters jumps to it, and
-/// Return presses the focused row.
+/// Rows share one Tab stop that lands on the selected row. Up and Down move the selection
+/// (it follows focus, as in a source list), Home and End go to the ends, typing a row's first
+/// letters jumps to it, and Return presses the focused row. Delete or Backspace runs a
+/// focused row's close, when it has one. Left collapses that row's section. A collapsed
+/// section is its own stop, and Right, Space or Return expands it. A standalone header,
+/// as in a virtual list, owns a separate Tab stop; Left collapses it. Inside a section the
+/// expanded header stays out of the arrow ring and Left on a row reaches the section.
 pub struct Sidebar {
     label: String,
     header: Vec<El>,
@@ -173,11 +177,13 @@ pub struct SidebarHeader {
     collapsed: Option<bool>,
     action: Option<El>,
     toggle: Option<Apply>,
+    section_keys: Option<Rc<dyn Fn(bool, El) -> El>>,
+    in_section: bool,
 }
 
 impl SidebarHeader {
     pub fn new(title: impl Into<String>) -> SidebarHeader {
-        SidebarHeader { title: title.into(), count: None, collapsed: None, action: None, toggle: None }
+        SidebarHeader { title: title.into(), count: None, collapsed: None, action: None, toggle: None, section_keys: None, in_section: false }
     }
     /// Shows a disclosure triangle for this state. Without it, or `on_toggle`, the header is
     /// a plain label.
@@ -195,8 +201,33 @@ impl SidebarHeader {
         self
     }
     pub fn on_toggle<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
-        self.toggle = Some(Box::new(move |e: El| e.on_press_tx(f)));
+        let f = Rc::new(f);
+        let press = f.clone();
+        let key = f;
+        self.toggle = Some(Box::new(move |e: El| e.on_press_tx(move |s: &mut S, tx| press(s, tx))));
         self.collapsed.get_or_insert(false);
+        self.section_keys = Some(Rc::new(move |collapsed, e: El| {
+            let key = key.clone();
+            e.on_key(move |s: &mut S, ev: &KeyEvent, tx: &mut Tx| {
+                if ev.mods != rune::Mods::default() {
+                    return false;
+                }
+                let expand = collapsed && (ev.key == Key::Right || ev.key == Key::Enter || matches!(&ev.key, Key::Text(t) if t == " "));
+                let collapse = !collapsed && ev.key == Key::Left;
+                if !expand && !collapse {
+                    return false;
+                }
+                if !tx.key_repeat() {
+                    key(s, tx);
+                }
+                true
+            })
+        }));
+        self
+    }
+
+    fn in_section(mut self) -> Self {
+        self.in_section = true;
         self
     }
 
@@ -215,14 +246,12 @@ impl SidebarHeader {
             let glyph = if collapsed { k.glyph.triangle_right } else { k.glyph.triangle_down };
             title = title.child(icon(glyph, 12.0).key("disclosure").color(c.icon_faint));
         }
-        let label = match self.collapsed {
-            Some(true) => format!("{}, collapsed", self.title),
-            Some(false) if self.toggle.is_some() => format!("{}, expanded", self.title),
-            _ => self.title,
-        };
+        let label = self.title;
+        let keys = self.section_keys;
+        let collapsed = self.collapsed == Some(true);
         let mut header = row()
             .key("section-header")
-            .label(label)
+            .label(label.clone())
             .w_full()
             .h(ROW_HEIGHT)
             .pt(4.0)
@@ -234,12 +263,29 @@ impl SidebarHeader {
         if let Some(a) = self.action {
             header = header.child(a);
         }
-        match self.toggle {
-            // Pointer only: in the list's focus group the arrows step through rows, and with
-            // selection following focus they would toggle the section as they passed.
-            Some(toggle) => k.interactive(toggle(header)).role("button").hover_motion(Anim::INSTANT, Anim::INSTANT).focusable(false),
+        let button = match self.toggle {
+            // The button stays out of the arrow ring so passing it does not toggle the section.
+            Some(toggle) => {
+                let mut b = k.interactive(toggle(header)).role("button").hover_motion(Anim::INSTANT, Anim::INSTANT).focusable(false);
+                if let Some(collapsed) = self.collapsed {
+                    b = b.expanded(!collapsed);
+                }
+                b
+            }
             None => header.role("heading"),
+        };
+        if let Some(keys) = keys && (!self.in_section || collapsed) {
+            if !self.in_section {
+                // A toggle is independent of the list's selected row.
+                return col().key("section-toggle").role("none").w_full().focus_group()
+                    .child(keys(collapsed, button.focusable(true)));
+            }
+            return keys(
+                collapsed,
+                col().key("section-toggle").role("group").label(label).expanded(!collapsed).w_full().focusable(true).child(button),
+            );
         }
+        button
     }
 }
 
@@ -290,9 +336,15 @@ impl SidebarSection {
     }
 
     pub fn build(self, k: &Kit) -> El {
-        let mut s = col().key(self.key).role("group").w_full().gap(2.0).motion(k.motion.disclosure).child(self.header.build(k));
-        if !self.collapsed {
+        let header = self.header.in_section();
+        let keys = header.section_keys.clone();
+        let collapsed = self.collapsed;
+        let mut s = col().key(self.key).role("group").w_full().gap(2.0).motion(k.motion.disclosure).child(header.build(k));
+        if !collapsed {
             s = s.children(self.rows);
+            if let Some(keys) = keys {
+                s = keys(false, s);
+            }
         }
         s
     }
@@ -335,6 +387,7 @@ pub struct SidebarRow {
     trailing: Option<El>,
     status: Option<RowStatus>,
     close: Option<Apply>,
+    close_key: Option<Apply>,
     selected: bool,
     depth: u8,
     height: Option<f32>,
@@ -359,6 +412,7 @@ impl SidebarRow {
             trailing: None,
             status: None,
             close: None,
+            close_key: None,
             selected: false,
             depth: 0,
             height: None,
@@ -441,9 +495,24 @@ impl SidebarRow {
         self
     }
     /// A close button in the status slot, in place of the status while the pointer is on the
-    /// row. It swaps at once, with no fade.
+    /// row. It swaps at once, with no fade. Delete or Backspace on the focused row runs the
+    /// same close; the button stays out of the arrow ring.
     pub fn on_close<S: 'static>(mut self, f: impl Fn(&mut S, &mut Tx) + 'static) -> Self {
-        self.close = Some(Box::new(move |e: El| e.on_press_tx(f)));
+        let f = Rc::new(f);
+        let press = f.clone();
+        let key = f;
+        self.close = Some(Box::new(move |e: El| e.on_press_tx(move |s: &mut S, tx| press(s, tx))));
+        self.close_key = Some(Box::new(move |e: El| {
+            e.on_key(move |s: &mut S, ev: &KeyEvent, tx: &mut Tx| {
+                if ev.mods != rune::Mods::default() || !matches!(ev.key, Key::Delete | Key::Backspace) {
+                    return false;
+                }
+                if !tx.key_repeat() {
+                    key(s, tx);
+                }
+                true
+            })
+        }));
         self
     }
     pub fn selected(mut self, s: bool) -> Self {
@@ -642,6 +711,10 @@ impl SidebarRow {
             r = (re.bind)(r);
         }
         // After the handlers, which would make it a button.
-        r.role("listitem")
+        let mut r = r.role("listitem");
+        if let Some(key) = self.close_key {
+            r = key(r);
+        }
+        r
     }
 }

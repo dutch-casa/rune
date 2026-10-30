@@ -61,8 +61,26 @@ pub struct ElementInfo {
     pub level: Option<u32>,
     /// Whether it is open ([`El::expanded`]); `None` when it can't open.
     pub expanded: Option<bool>,
+    /// Declared check ([`El::checked`]). `None` when this element is not checkable.
+    /// [`Self::mixed`] is the mixed state.
+    pub checked: Option<bool>,
+    /// [`El::indeterminate`].
+    pub mixed: bool,
+    /// [`El::disabled`]. Content stays visible; input does not.
+    pub disabled: bool,
+    /// [`El::invalid`].
+    pub invalid: bool,
+    /// [`El::value_range`], when this element has a numeric value.
+    pub range: Option<crate::ValueRange>,
     /// A selected item of a list, tree, table or group ([`El::focus_selected`]).
     pub item_selected: bool,
+    /// Keyboard cursor ([`El::focus_cursor`]), not selection.
+    pub item_cursor: bool,
+    /// Resolved path of the node this element controls ([`El::controls`]).
+    /// None when unset, stale, or ambiguous.
+    pub controls: Option<String>,
+    /// [`El::orientation`]. None when the element does not declare one.
+    pub orientation: Option<crate::Axis>,
     /// How far [`El::sticky_top`], [`El::sticky_bottom`] or [`El::sticky_left`] moved it from
     /// where scrolling put it this frame, in points: down for a stuck header, up for a stuck
     /// footer, right for a stuck left element, 0 when it isn't stuck. `rect` already includes it.
@@ -180,6 +198,7 @@ impl<S: 'static> Runtime<S> {
                 crate::live::Property::Fill | crate::live::Property::Blur => 0,
             })
         }
+        let controls = self.control_paths();
         let store = self.scene.store();
         let animating = |id: NodeId| store.is_animating(id, prop::FRAME) || store.is_animating(id, prop::TRAVEL)
             || store.is_animating(id, prop::PRESENCE) || store.is_animating(id, prop::OFFSET) || store.is_animating(id, prop::SCALE) || store.is_animating(id, P_PRESS_SCALE)
@@ -285,7 +304,15 @@ impl<S: 'static> Runtime<S> {
                     }),
                     level: n.a11y.level,
                     expanded: n.a11y.expanded,
+                    checked: n.a11y.checked.map(|s| s.checked),
+                    mixed: n.a11y.checked.is_some_and(|s| s.indeterminate),
+                    disabled: n.a11y.disabled,
+                    invalid: n.a11y.invalid,
+                    range: n.a11y.range,
                     item_selected: n.focus.selected,
+                    item_cursor: n.focus.cursor,
+                    controls: controls[i].clone(),
+                    orientation: n.a11y.orientation,
                     stuck: self.stuck.get(i).copied().unwrap_or(0.0),
                     virtual_extent: self.virtuals.contains_key(&n.path) && n.vis.fill.a == 0.0
                         && n.vis.border_width == 0.0 && n.vis.shadows.is_empty() && n.text.is_none() && n.vis.icon.is_none(),
@@ -309,7 +336,9 @@ impl<S: 'static> Runtime<S> {
                 visible: [r.x.max(c[0]), r.y.max(c[1]), (r.edges()[2].min(c[2]) - r.x.max(c[0])).max(0.0),
                     (r.edges()[3].min(c[3]) - r.y.max(c[1])).max(0.0)],
                 revealing: true, in_growing_row: false, scrolling: false, virtual_extent: false, live_intent: 0, caret: None, drag_out: false,
-                help: None, selected: None, level: None, expanded: None, item_selected: false, stuck: 0.0,
+                help: None, selected: None, level: None, expanded: None, checked: None, mixed: false,
+                disabled: false, invalid: false, range: None, item_selected: false, item_cursor: false,
+                controls: None, orientation: None, stuck: 0.0,
             });
         }
         self.link_elements(&mut elements);

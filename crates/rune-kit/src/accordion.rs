@@ -82,10 +82,13 @@ impl Accordion {
             let (first, last) = (i == 0, i + 1 == n);
             let bottom = if last && !item.expanded { r } else { 0.0 };
             let top = if first { r } else { 0.0 };
+            let enabled = item.state != State::Disabled;
             let mut trigger = row()
                 .key("trigger")
                 .role("button")
                 .label(item.title.clone())
+                .expanded(item.expanded)
+                .focusable(enabled)
                 .h(32.0)
                 .px(12.0)
                 .py(8.0)
@@ -99,7 +102,6 @@ impl Accordion {
             if item.state == State::Rest {
                 trigger = trigger.hover(c.hover);
             }
-            let enabled = item.state != State::Disabled;
             let trigger = item.acts.apply(trigger, enabled);
             let mut e = col().key(format!("item{i}")).items_stretch().child(trigger);
             if i > 0 {

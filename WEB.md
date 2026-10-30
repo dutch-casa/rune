@@ -149,24 +149,33 @@ page's `viewport-fit=cover` meta tag and the textarea's 16 px font size.
 
 ## Accessibility
 
-The browser shell extends the retained scene into a hidden semantic DOM mirror. It exposes
-headings, text, links, controls and native editors without replacing canvas rendering.
-Geometry follows presented layout. Unchanged frames emit no mirror update.
+The browser shell projects the retained scene into a semantic DOM mirror beside the canvas.
+It exposes headings, text, links, controls and native editors. Geometry follows presented
+layout. Unchanged frames emit no mirror update. The inspector reads the same retained facts.
+The mirror is clipped in canvas view. Its native controls keep pointer events enabled so
+Safari exposes activation; the clip leaves physical pointer hits with the canvas.
 
-Rune Kit supplies names and checked, expanded and disabled state from its existing component
-values. A `Field` renders one caption node; its control references that node with
-`aria-labelledby`. An explicit different control name takes precedence. Groups with several
-editors need a name for each editor. Icon-only controls need a label or help text that names
-their action.
+Rune Kit supplies names, checked and mixed state, expansion, disabled and invalid state,
+and progress values from its existing component values. A `Field` renders one caption node;
+its control references that node with `aria-labelledby`. An explicit different control name
+takes precedence. Groups with several editors need a name for each editor. Icon-only controls
+need a label or help text that names their action.
 
 `El::fallback_label` replaces an existing name; it does not mean “set only if missing.”
 Use `label_if_missing` to supply a composed caption without replacing an explicit control name.
 
-For custom controls, use `El::role`, `label`, `checked(bool)`, `indeterminate(bool)` and
-`disabled(bool)` as appropriate. Roles do not implement a custom control's keyboard behavior.
-Read-only editors support selection and copying without changing the app's model or enabling
-IME. Return can activate the window's default button. Disabled controls remain readable but
-cannot receive input. Browser actions are checked against the current scene.
+For custom controls, use `El::role`, `label`, `checked(bool)`, `indeterminate(bool)`,
+`disabled(bool)` and `invalid(bool)` as appropriate. `value_range(value, min..=max)` requires
+finite, ordered bounds and an in-range value; it panics rather than clamping invalid input.
+`controls(key)` resolves one current target. A missing or ambiguous target leaves the
+relationship unset. `orientation(Axis)` describes the control's orientation.
+
+Roles do not implement keyboard behavior. Kit supplies that behavior for its controls.
+Its tree and table cursors are separate from selection. `focus_cursor(bool)` exposes that
+cursor; a focused search editor references the cursor inside its declared controlled list.
+Read-only editors support selection and copying without changing the model or enabling IME.
+Return can activate the window's default button. Disabled controls remain readable but cannot
+receive input. Browser actions are checked against the current scene.
 
 Inline links follow source order while retaining their action identities. Ordinary web URLs
 remain native anchors. Modal focus returns to the previous control or link on dismissal.
@@ -174,11 +183,18 @@ Focused virtual editors retain their native element across unmounts. Browsers wi
 `Element.moveBefore` use focus and selection restoration; reparenting can still end native
 composition in those browsers.
 
-`Runtime::a11y_json()` returns the existing JSON array with optional control and editor fields.
-Role metadata alone does not implement range values or complete composite-widget patterns.
-This target remains experimental. These semantics do not certify VoiceOver compatibility or
-WCAG conformance. Check an application's custom interactions with its target screen readers
-and devices.
+The shell's **Text view** button displays the same semantic DOM in normal text flow and hides
+the canvas. It keeps the native editor, draft, selection and application handlers. Browser
+zoom, user fonts, text spacing and foreground/background overrides can then apply to real
+text. The button remains outside the reconciled scene and returns to canvas rendering.
+This is an alternate presentation, not another UI tree or application state model.
+
+`Runtime::a11y_json()` retains its JSON array contract with optional control and editor fields.
+Virtual lists expose mounted rows only. Custom drawings need meaningful text alternatives.
+Authors still own content, theme contrast, custom keyboard interactions and the `open` state
+of controlled overlays such as `Tooltip` and `HoverCard`. Use `help` for a control's accessible
+description. This experimental target does not make an arbitrary application WCAG-conformant;
+check complete pages and processes with their target browsers, screen readers and devices.
 
 ## Scope and verification
 
@@ -198,15 +214,26 @@ Install Playwright with its Chromium browser first. `PLAYWRIGHT_MODULE` and `CHR
 can select an existing installation. `WEB_ENGINE=webkit` tries an installed Playwright WebKit
 and reports whether it has a WebGPU adapter.
 
-The check covers GPU errors, idle rAF requests and submissions, touch focus and momentum,
-Unicode edits, sliding editor contexts, composition, paste, clipboard copy, theme and resize.
+The check reports GPU errors and measures idle rAF requests and GPU submissions. It exercises
+touch focus, momentum, Unicode edits, sliding editor contexts, composition, paste, clipboard copy,
+themes and resizing.
+
 The `?input-proof` fixture adds password input, Tab/Escape focus and mobile Enter behavior.
-Its Rune Kit controls also check native accessibility names and values, caption ownership,
-checkable labels and help descriptions through Chromium's accessibility tree.
+Its Kit controls check native names and values, caption ownership, checkable labels and help
+descriptions through Chromium's accessibility tree. `?accessibility-proof` exercises disclosure,
+invalid input recovery, progress and notification dismissal. Its `widget=combobox`, `table`
+and `tree` variants exercise keyboard cursors and native relationships. `widget=sidebar`
+checks independent header focus, and `widget=split` checks pointer-only resizing and grip keys.
 
 Its mobile DPR check exercises the Safari-style CSS-size fallback because Chromium device
 emulation does not scale `devicePixelContentBoxSize`. This is not a real iPhone keyboard,
 dictation, autocorrect or Safari WebGPU test; those still need device verification.
+
+For a manual Safari and VoiceOver check, open `?accessibility-proof`. Activate
+**After controls (0)** with VoiceOver; its name must change to **After controls (1)**.
+Expand **Details** and check the reported state. Change **Account name** from `bad` to `ready`
+and check that VoiceOver no longer reports invalid data. On `?accessibility-proof&widget=combobox`,
+open **Model**, use Down and Return to choose **Beta**, and check both the name and value.
 
 The shell retains winit 0.30's rAF and ResizeObserver integration. Rune owns the browser text
 services and semantic DOM bridge beside the canvas. This does not replace the native shells.

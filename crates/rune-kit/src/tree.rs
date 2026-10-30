@@ -791,6 +791,7 @@ impl TreeItem {
             .label(self.label.clone())
             .level(r.depth + 1)
             .focus_selected(r.selected)
+            .focus_cursor(r.cursor)
             .w_full()
             .h(style.row_height)
             .pl(pad + r.depth as f32 * style.indent)

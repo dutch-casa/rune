@@ -58,6 +58,10 @@ impl Toast {
 
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
+        let announced = match self.description.as_deref() {
+            Some(d) if !d.is_empty() => format!("{}. {d}", self.title),
+            _ => self.title.clone(),
+        };
         let mut content = col().key("content").grow(1.0).shrink().gap(4.0).child(
             text(self.title.clone())
                 .key("title")
@@ -78,6 +82,7 @@ impl Toast {
                 .key("close")
                 .role("button")
                 .label("Close")
+                .focusable(true)
                 .size(20.0, 20.0)
                 .center()
                 .radius(4.0)
@@ -89,7 +94,7 @@ impl Toast {
         let mut root = col()
             .key(self.key)
             .role("status")
-            .label(self.title)
+            .label(announced)
             .w(320.0)
             .padding(12.0)
             .gap(12.0)

@@ -118,7 +118,11 @@ impl Progress {
     }
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
+        let fraction = self.value.map(|v| v.clamp(0.0, 1.0));
         let mut root = col().role("progressbar").w_full().gap(4.0);
+        if let Some(v) = fraction {
+            root = root.value_range(v * 100.0, 0.0..=100.0);
+        }
         if self.label.is_some() || self.show_value {
             let mut header = row().key("header").gap(8.0).center_y();
             if let Some(l) = &self.label {
@@ -126,7 +130,7 @@ impl Progress {
                 header = header.child(text(l.clone()).key("label").font(k.ty.text_small).color(c.std_text));
             }
             header = header.child(spacer());
-            if let (true, Some(v)) = (self.show_value, self.value) {
+            if let (true, Some(v)) = (self.show_value, fraction) {
                 header = header.child(
                     text(format!("{}%", (v * 100.0).round())).key("value").font(k.ty.text_small).color(c.text_weak),
                 );
@@ -142,8 +146,8 @@ impl Progress {
             .border(1.0, c.border_weak)
             .clip_soft(0.0);
         let fill = el().key("fill").h_full().radius(999.0).fill(c.border_active);
-        track = track.child(match self.value {
-            Some(v) => fill.w_frac(v.clamp(0.0, 1.0)),
+        track = track.child(match fraction {
+            Some(v) => fill.w_frac(v),
             // A quarter-width segment crosses the whole track, then wraps from the left.
             None => fill.w_frac(0.25).looping(rune_motion::LoopSpec::slide(1.4, [-1.0, 0.0], [4.0, 0.0])),
         });
@@ -167,10 +171,13 @@ impl ProgressCircle {
     }
     pub fn build(self, k: &Kit) -> El {
         let ink = k.c.icon_muted;
+        let fraction = self.value.clamp(0.0, 1.0);
         el().role("progressbar")
+            .label("Progress")
+            .value_range(fraction * 100.0, 0.0..=100.0)
             .size(self.size, self.size)
             .child(icon(&RING, self.size).absolute(0.0, 0.0).color(ink).opacity(0.2))
-            .child(icon(arc_icon(self.value), self.size).absolute(0.0, 0.0).color(ink))
+            .child(icon(arc_icon(fraction), self.size).absolute(0.0, 0.0).color(ink))
     }
 }
 
