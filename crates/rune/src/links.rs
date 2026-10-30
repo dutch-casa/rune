@@ -357,7 +357,7 @@ impl<S: 'static> Runtime<S> {
         let changed = self.set_focus(Some(self.nodes[i].path.clone()), true) || self.focused_link != Some(k);
         self.focused_link = Some(k);
         self.dirty |= changed;
-        self.pending.scroll_to.push((None, self.nodes[i].path.clone()));
+        self.pending.scroll_to.push(crate::runtime::ScrollReveal::into_view(None, self.nodes[i].path.clone()));
         true
     }
 

@@ -113,7 +113,7 @@ impl<S: 'static> Runtime<S> {
     /// unless the focused element takes Return itself. Text fields decide in `with_focused`.
     pub(super) fn default_button_key(&mut self, ev: &KeyEvent, tx: &mut Tx) -> bool {
         if ev.key != Key::Enter || ev.mods != crate::Mods::default() { return false; }
-        if self.focused_input().is_some() || self.focused_index().is_some_and(|i| self.takes_return(i)) { return false; }
+        if self.focused_input().is_some_and(|i| i.access.is_some()) || self.focused_index().is_some_and(|i| self.takes_return(i)) { return false; }
         self.press_default_button(tx)
     }
     /// Presses the default button, if one is in reach; a held Return presses it once.
@@ -197,6 +197,11 @@ impl<S: 'static> Runtime<S> {
             .map(|i| self.link_focus_target(i));
         if matches!(link, Some(None)) { path = None; }
         self.input_click.on_focus_change(path.as_deref());
+        if self.focused != path && self.focused_input().is_some_and(|input| input.access.is_none())
+            && self.text_sel.path.as_deref() == self.focused.as_deref()
+        {
+            self.clear_text_selection();
+        }
         if self.focused != path { self.ime_area = None; self.ime_reset = true; self.focused_link = None; self.hover_focus = false; }
         // Tabbing away or into a field takes the selection's keyboard; a hovered row doesn't.
         if self.focused != path

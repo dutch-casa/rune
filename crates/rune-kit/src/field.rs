@@ -50,7 +50,7 @@ impl Field {
         let mut root = col().role("group").gap(8.0).w_full().items_start();
         if let Some(l) = &self.label {
             let mut lab = row().key("label").w_full().min_h(16.0).gap(4.0).center_y().child(
-                text(l.clone()).key("text").font(rune::TextStyle { line_height: 16.0, ..k.ty.ui_medium }).color(c.text_base),
+                text(l.clone()).key("text").role("label").font(rune::TextStyle { line_height: 16.0, ..k.ty.ui_medium }).color(c.text_base),
             );
             if self.info {
                 lab = lab.child(icon(&INFO, 16.0).key("info").color(c.icon_muted));

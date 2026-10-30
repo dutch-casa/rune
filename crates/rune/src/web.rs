@@ -185,13 +185,13 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             let _ = canvas.set_attribute("tabindex", "0");
         }
         if self.embedded {
-            let touch = if app.fit_content_height { "pan-y" } else { "none" };
+            let touch = if app.fit_content_height { "pan-y pinch-zoom" } else { "pinch-zoom" };
             canvas.style().set_css_text(&format!(
                 "display:block;width:100%;touch-action:{touch};outline:none;user-select:none;-webkit-user-select:none"
             ));
         } else {
             // No border/padding: winit's physical input and resize coordinates must match pixels.
-            canvas.style().set_css_text("position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;outline:none;user-select:none;-webkit-user-select:none");
+            canvas.style().set_css_text("position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:pinch-zoom;outline:none;user-select:none;-webkit-user-select:none");
             if let Some(document) = web_sys::window().and_then(|w| w.document()) {
                 document.set_title(app.spec.title);
                 if let Some(body) = document.body() { body.style().set_css_text("margin:0;overflow:hidden;overscroll-behavior:none"); }
