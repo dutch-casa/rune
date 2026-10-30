@@ -1,0 +1,3 @@
+- Extend the browser's semantic DOM mirror with native editors, control state, names and help text. Rune Kit supplies metadata through its existing component APIs.
+- Preserve editor identity during composition and virtual unmounts. Keep read-only selection native, reject stale or disabled browser actions, and retain modal focus and source-ordered link identity.
+- Keep canvas rendering, embedded apps, native URL anchors and browser copy behavior. Allow page zoom in generated HTML.

@@ -197,6 +197,8 @@ pub(super) fn flatten(
         }
     }
     let inert = inert || parent.is_some_and(|p| nodes[p].inert);
+    let mut a11y = a11y;
+    a11y.disabled |= parent.is_some_and(|p| nodes[p].a11y.disabled);
     let mut vis = vis;
     if vis.hover_within.is_none() {
         vis.hover_within = above.as_ref()
