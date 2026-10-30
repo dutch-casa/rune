@@ -1174,6 +1174,8 @@ pub struct Runtime<S: 'static> {
     caught_up: f32,
     slack_dt: f32,
     focused: Option<String>,
+    /// The focused text element's link, by declaration index.
+    focused_link: Option<usize>,
     keyboard_focus: bool,
     /// The pointer focused a `focus_highlight` row, so its highlight shows without a key.
     hover_focus: bool,
@@ -1190,10 +1192,10 @@ pub struct Runtime<S: 'static> {
     full_keyboard_access: bool,
     /// `App::tab_visits_controls`: Tab visits every control whatever `full_keyboard_access` says.
     tab_visits_controls: bool,
-    modal_stack: Vec<(String, Option<String>)>,
+    modal_stack: Vec<(String, Option<focus::FocusTarget>)>,
     /// Focus when the running commit began, before a new view's focus request applied: what a
     /// modal that opens in this commit returns focus to.
-    focus_before_commit: Option<String>,
+    focus_before_commit: Option<focus::FocusTarget>,
     /// Focus before the current gesture/commit blurred it, so a scrim press that blurs on
     /// pointer-down and closes its overlay on pointer-up still honours `focus_return`.
     last_focused: Option<String>,
@@ -1566,6 +1568,7 @@ impl<S: 'static> Runtime<S> {
             caught_up: 0.0,
             slack_dt: 0.0,
             focused: None,
+            focused_link: None,
             keyboard_focus: false,
             hover_focus: false,
             typeahead: (String::new(), f64::NEG_INFINITY),
@@ -2853,26 +2856,6 @@ impl<S: 'static> Runtime<S> {
         handlers.into_iter().any(|f| Tx::took(f(states!(self), ev, tx), tx))
     }
 
-    fn focused_input(&self) -> Option<&InputSpec> {
-        let path = self.focused.as_deref()?;
-        self.node(path).and_then(|n| n.input.as_deref()).or_else(|| self.virtual_inputs.get(path).map(Box::as_ref))
-    }
-
-    /// What [`Tx::focused`] reports: the focused link's id, else the focused element's key,
-    /// else its path's last segment (a field in a virtual row that scrolled out has no node).
-    fn focused_key(&self) -> Option<String> {
-        let path = self.focused.as_deref()?;
-        if let Some(id) = self.focused_index().and_then(|i| self.focused_link_id(i)) { return Some(id); }
-        Some(self.focused_index().and_then(|i| self.nodes[i].key.clone())
-            .unwrap_or_else(|| path.rsplit('/').next().unwrap_or(path).to_owned()))
-    }
-
-    /// The focused element's index. Unlike [`Runtime::node`], this finds it while it exits.
-    fn focused_index(&self) -> Option<usize> {
-        let path = self.focused.as_deref()?;
-        self.nodes.iter().position(|n| n.path == path)
-    }
-
     /// Node `i`'s edges as drawn this frame (points, x0 y0 x1 y1), or its layout box before
     /// it draws.
     fn drawn_edges(&self, i: usize) -> [f32; 4] {
@@ -3309,8 +3292,8 @@ impl<S: 'static> Runtime<S> {
                 scroll.pinned = true;
             }
         }
+        self.focus_before_commit = self.focus_target();
         let mut measured = self.measure_commit(tx);
-        self.focus_before_commit = self.focused.clone();
         // Settle layout reads first so a field that mounts once a rect is known is in `nodes`.
         measured = self.settle_layout_reads(measured, tx);
         if self.sync_requested_focus(&mut measured.nodes) {
@@ -4264,10 +4247,12 @@ impl<S: 'static> Runtime<S> {
     /// The single reachable editor in a textbox. Only resolve descendants on presses;
     /// hover hit testing and cursor updates use the container's role directly.
     fn textbox_input(&self, i: usize) -> Option<usize> {
-        if self.nodes[i].input.is_some() { return self.can_focus(i).then_some(i); }
+        if self.nodes[i].input.is_some() {
+            return (self.nodes[i].input.as_ref().is_some_and(|input| input.access.is_some()) && self.can_focus(i)).then_some(i);
+        }
         if self.nodes[i].role != "textbox" { return None; }
         let mut inputs = (0..self.nodes.len()).filter(|&j| {
-            self.nodes[j].input.is_some()
+            self.nodes[j].input.as_ref().is_some_and(|input| input.access.is_some())
                 && self.can_focus(j)
                 && std::iter::successors(self.nodes[j].parent, |&p| self.nodes[p].parent).any(|p| p == i)
         });

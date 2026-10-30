@@ -100,12 +100,29 @@ pub(crate) type DragOutFn = Rc<dyn Fn(crate::states::StatesRef<'_>) -> Option<cr
 pub(crate) type DragEndFn = Rc<dyn Fn(crate::states::States<'_>, crate::DragOutcome, &mut Tx)>;
 pub(crate) type EditFn = Rc<dyn for<'a> Fn(crate::states::States<'a>) -> &'a mut TextEdit>;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct CheckState {
+    pub checked: bool,
+    pub indeterminate: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum LabelSource {
+    Fallback,
+    Composed,
+    #[default]
+    Explicit,
+}
+
 /// Accessibility state beyond role and label (`El::level`, `El::expanded`, `El::secure`).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct A11y {
     pub level: Option<u32>,
     pub expanded: Option<bool>,
     pub secure: bool,
+    pub disabled: bool,
+    pub label_source: LabelSource,
+    pub checked: Option<CheckState>,
 }
 
 pub(crate) use crate::el_focus::FocusSpec;
@@ -1354,23 +1371,6 @@ impl El {
     /// than one reachable editor inside, the container does nothing special.
     pub fn role(mut self, role: &'static str) -> Self {
         self.role = role;
-        self
-    }
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = Some(label.into());
-        self
-    }
-    /// An outline row's depth for accessibility, 1 at the top (ARIA `aria-level`), as a
-    /// `treeitem` carries it. The element tree reports it as `level`.
-    pub fn level(mut self, level: u32) -> Self {
-        self.a11y.level = Some(level);
-        self
-    }
-    /// Whether a disclosure (a tree row with children, a collapsible header) is open, for
-    /// accessibility (ARIA `aria-expanded`). Leave it unset on an element that can't open.
-    /// The element tree reports it as `expanded`.
-    pub fn expanded(mut self, open: bool) -> Self {
-        self.a11y.expanded = Some(open);
         self
     }
     /// Turn this element's icon by `radians`, clockwise about its centre: a disclosure chevron
