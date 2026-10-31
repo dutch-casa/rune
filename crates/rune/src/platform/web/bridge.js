@@ -307,6 +307,9 @@ function update(h, entry, item) {
     attribute(element, 'aria-valuenow', item.range ? item.range.value : null);
     attribute(element, 'aria-valuemin', item.range ? item.range.min : null);
     attribute(element, 'aria-valuemax', item.range ? item.range.max : null);
+    attribute(element, 'aria-valuetext', item.value_text || null);
+    attribute(element, 'aria-sort', item.sort === 'ascending' || item.sort === 'descending' ? item.sort : null);
+    attribute(element, 'aria-keyshortcuts', item.keyshortcuts || null);
     if (editor || element.tagName === 'BUTTON') element.disabled = !!item.disabled;
     if (item.help) {
         if (!entry.help) {

@@ -53,6 +53,9 @@ impl Default for ElementInfo {
             item_cursor: false,
             controls: None,
             orientation: None,
+            sort: None,
+            value_text: None,
+            key_shortcuts: None,
             stuck: 0.0,
         }
     }

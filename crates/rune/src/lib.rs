@@ -105,6 +105,7 @@ pub use el::ScrollSpec;
 pub use el::Shadow;
 pub use el::Shell;
 pub use el::Side;
+pub use el::a11y::SortDirection;
 pub use el::Tx;
 pub use el::ValueRange;
 pub use el::anchor_rect;

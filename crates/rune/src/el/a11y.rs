@@ -61,6 +61,13 @@ impl Current {
     }
 }
 
+/// Which way a column header is sorted (`aria-sort`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SortDirection {
+    Ascending,
+    Descending,
+}
+
 /// Roles the web mirror accepts. An unknown role is omitted from the DOM node; the element stays.
 /// Sorted for lookup.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -100,6 +107,11 @@ pub(crate) struct A11y {
     pub current: Option<Current>,
     /// The control selects more than one item (a multi-select grid, list or tree).
     pub multiselectable: bool,
+    pub sort: Option<SortDirection>,
+    /// Spoken form of [`Self::range`] (`aria-valuetext`).
+    pub value_text: Option<String>,
+    /// Keyboard shortcut that activates this element (`aria-keyshortcuts`).
+    pub key_shortcuts: Option<String>,
 }
 
 
@@ -215,6 +227,26 @@ impl El {
         self.a11y.multiselectable = on;
         self
     }
+    /// The sort direction of a column header (`aria-sort`). `None` clears it.
+    pub fn sort(mut self, direction: Option<SortDirection>) -> Self {
+        self.a11y.sort = direction;
+        self
+    }
+    /// Spoken form of a range value (`aria-valuetext`). An empty string clears it.
+    pub fn value_text(mut self, text: impl Into<String>) -> Self {
+        let text = text.into();
+        self.a11y.value_text = (!text.is_empty()).then_some(text);
+        self
+    }
+    /// A keyboard shortcut that activates this element (`aria-keyshortcuts`).
+    ///
+    /// An empty string clears it. A space is a sequence and `+` is a chord, as the
+    /// attribute defines them.
+    pub fn key_shortcuts(mut self, shortcuts: impl Into<String>) -> Self {
+        let shortcuts = shortcuts.into();
+        self.a11y.key_shortcuts = (!shortcuts.is_empty()).then_some(shortcuts);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -252,9 +284,19 @@ mod tests {
     fn indeterminate_false_does_not_make_a_control_checkable() {
         assert!(el().indeterminate(false).a11y.checked.is_none());
         let mixed = el().checked(true).indeterminate(true).indeterminate(false);
-        assert_eq!(mixed.a11y.checked, Some(CheckState { checked: true, indeterminate: false }));
+        assert_eq!(mixed.a11y.checked, Some(super::CheckState { checked: true, indeterminate: false }));
         let off = el().checked(false).indeterminate(false);
-        assert_eq!(off.a11y.checked, Some(CheckState { checked: false, indeterminate: false }));
+        assert_eq!(off.a11y.checked, Some(super::CheckState { checked: false, indeterminate: false }));
         assert!(el().indeterminate(true).a11y.checked.is_some_and(|s| s.indeterminate));
+    }
+
+    #[test]
+    fn sort_value_text_and_key_shortcuts_publish_and_clear() {
+        let set = el().sort(Some(super::SortDirection::Ascending)).value_text("320 points").key_shortcuts("Delete");
+        assert_eq!(set.a11y.sort, Some(super::SortDirection::Ascending));
+        assert_eq!(set.a11y.value_text.as_deref(), Some("320 points"));
+        assert_eq!(set.a11y.key_shortcuts.as_deref(), Some("Delete"));
+        let cleared = set.sort(None).value_text("").key_shortcuts("");
+        assert!(cleared.a11y.sort.is_none() && cleared.a11y.value_text.is_none() && cleared.a11y.key_shortcuts.is_none());
     }
 }

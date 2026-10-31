@@ -1,0 +1,1 @@
+- **`El::sort`, `El::value_text` and `El::key_shortcuts`.** A column header publishes its sort, a range control can speak its value (for example "320 points"), and a control can name the shortcut that activates it. The web mirror sets `aria-sort`, `aria-valuetext` and `aria-keyshortcuts`.

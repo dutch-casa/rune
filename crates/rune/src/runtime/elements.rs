@@ -89,6 +89,12 @@ pub struct ElementInfo {
     pub controls: Option<String>,
     /// [`El::orientation`]. None when the element does not declare one.
     pub orientation: Option<crate::Orientation>,
+    /// [`El::sort`]. None when the element does not declare a sort.
+    pub sort: Option<crate::SortDirection>,
+    /// [`El::value_text`]. None when the element has no spoken value.
+    pub value_text: Option<String>,
+    /// [`El::key_shortcuts`]. None when the element declares no shortcut.
+    pub key_shortcuts: Option<String>,
     /// How far [`El::sticky_top`], [`El::sticky_bottom`] or [`El::sticky_left`] moved it from
     /// where scrolling put it this frame, in points: down for a stuck header, up for a stuck
     /// footer, right for a stuck left element, 0 when it isn't stuck. `rect` already includes it.
@@ -323,6 +329,9 @@ impl<S: 'static> Runtime<S> {
                     item_cursor: n.focus.cursor,
                     controls: controls[i].clone(),
                     orientation: n.a11y.orientation,
+                    sort: n.a11y.sort,
+                    value_text: n.a11y.value_text.clone(),
+                    key_shortcuts: n.a11y.key_shortcuts.clone(),
                     stuck: self.stuck.get(i).copied().unwrap_or(0.0),
                     virtual_extent: self.virtuals.contains_key(&n.path) && n.vis.fill.a == 0.0
                         && n.vis.border_width == 0.0 && n.vis.shadows.is_empty() && n.text.is_none() && n.vis.icon.is_none(),
@@ -348,7 +357,7 @@ impl<S: 'static> Runtime<S> {
                 revealing: true, in_growing_row: false, scrolling: false, virtual_extent: false, live_intent: 0, caret: None, drag_out: false,
                 help: None, selected: None, level: None, expanded: None, checked: None, mixed: false,
                 disabled: false, invalid: false, range: None, item_selected: false, item_cursor: false,
-                controls: None, orientation: None, stuck: 0.0,
+                controls: None, orientation: None, sort: None, value_text: None, key_shortcuts: None, stuck: 0.0,
             });
         }
         self.link_elements(&mut elements);

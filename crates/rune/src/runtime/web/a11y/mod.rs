@@ -83,6 +83,9 @@ pub(crate) struct A11yItem {
     pub pressed: Option<bool>,
     pub current: Option<Current>,
     pub multiselectable: bool,
+    pub sort: Option<crate::SortDirection>,
+    pub value_text: Option<String>,
+    pub key_shortcuts: Option<String>,
     pub edit: Option<A11yEdit>,
 }
 
@@ -172,6 +175,14 @@ impl A11yItem {
         if let Some(pressed) = self.pressed { obj.insert("pressed".into(), json!(pressed)); }
         if let Some(current) = self.current { obj.insert("current".into(), json!(current.as_str())); }
         if self.multiselectable { obj.insert("multiselectable".into(), json!(true)); }
+        if let Some(sort) = self.sort {
+            obj.insert("sort".into(), json!(match sort {
+                crate::SortDirection::Ascending => "ascending",
+                crate::SortDirection::Descending => "descending",
+            }));
+        }
+        if let Some(text) = &self.value_text { obj.insert("value_text".into(), json!(text)); }
+        if let Some(keys) = &self.key_shortcuts { obj.insert("keyshortcuts".into(), json!(keys)); }
         if let Some(help) = &self.help { obj.insert("help".into(), json!(help)); }
         if self.modal { obj.insert("modal".into(), json!(true)); }
         if let Some(edit) = &self.edit {
@@ -236,6 +247,7 @@ impl<S: 'static> Runtime<S> {
 
     fn project_item(&self, node: &super::semantic::SemanticNode) -> A11yItem {
         let i = node.origin;
+        let source = &self.nodes[i].a11y;
         A11yItem {
             kind: node.kind, path: node.path.clone(), rect: rect4(self.drawn_box(i)), font_size: 0.0,
             level: node.level, expanded: node.expanded, text: node.text.clone(), runs: Vec::new(),
@@ -245,7 +257,9 @@ impl<S: 'static> Runtime<S> {
             orientation: node.orientation, pressable: self.press_capable(i), help: node.help.clone(),
             modal: node.modal, invalid: node.invalid, range: node.range,
             set_size: node.set_size, pos_in_set: node.pos_in_set, pressed: node.pressed,
-            current: node.current, multiselectable: node.multiselectable, edit: None,
+            current: node.current, multiselectable: node.multiselectable,
+            sort: source.sort, value_text: source.value_text.clone(), key_shortcuts: source.key_shortcuts.clone(),
+            edit: None,
         }
     }
 
