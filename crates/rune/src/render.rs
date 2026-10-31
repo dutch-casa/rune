@@ -558,8 +558,24 @@ impl Gpu {
 /// if none opens, it's dropped. Calling again does nothing. Only on macOS, where any Metal adapter
 /// presents to any window; elsewhere the window's surface decides the adapter, and this does
 /// nothing.
+///
+/// An app that draws with `GpuBackend::Metal` should call `prewarm_gpu_on` instead, so the thread
+/// starts on that backend rather than on wgpu's and starting over.
 pub fn prewarm_gpu() {
     prewarm::start();
+}
+
+/// Chooses `backend` (as `App::gpu_backend` does), then starts `prewarm_gpu`'s thread on it, so a
+/// Metal app's prewarm never starts on wgpu and restarts. `App::gpu_backend` with the same backend
+/// afterwards changes nothing. Elsewhere, or without `metal-backend`, it is `prewarm_gpu`.
+pub fn prewarm_gpu_on(backend: crate::GpuBackend) {
+    choose_then_start(backend, crate::gpu::backend::choose, prewarm::start);
+}
+
+/// `choose` before `start`: a thread started first would run on the old backend.
+fn choose_then_start(backend: crate::GpuBackend, choose: impl FnOnce(crate::GpuBackend), start: impl FnOnce()) {
+    choose(backend);
+    start();
 }
 
 /// Starts `prewarm_gpu`'s thread over if it's working, for a backend chosen after it started.
@@ -1174,6 +1190,16 @@ pub fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -
 #[cfg(test)]
 mod backdrop_tests;
 
+
+#[cfg(test)]
+mod prewarm_order_tests {
+    #[test]
+    fn prewarm_gpu_on_chooses_before_it_starts() {
+        let log = std::cell::RefCell::new(Vec::new());
+        super::choose_then_start(crate::GpuBackend::Metal, |b| log.borrow_mut().push(format!("choose {b:?}")), || log.borrow_mut().push("start".into()));
+        assert_eq!(*log.borrow(), ["choose Metal", "start"]);
+    }
+}
 
 /// `prewarm_gpu` and how a window picks it up, on a bare Metal layer (no window server needed).
 #[cfg(all(test, target_os = "macos"))]

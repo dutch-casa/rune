@@ -216,6 +216,7 @@ pub use recorder::RecorderState;
 pub use recorder::Recording;
 pub use render::MAX_BACKDROP_BLURS;
 pub use render::prewarm_gpu;
+pub use render::prewarm_gpu_on;
 pub use rune_motion::Anim;
 pub use rune_motion::AnimExt;
 pub use rune_motion::Beat;

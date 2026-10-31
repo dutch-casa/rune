@@ -40,6 +40,15 @@ pub(crate) fn current() -> GpuBackend {
     resolve(std::env::var("RUNE_GPU_BACKEND").ok().as_deref(), chosen)
 }
 
+/// What `RUNE_GPU_LOG` calls the backend that draws.
+pub(crate) fn label() -> &'static str {
+    #[cfg(all(target_os = "macos", feature = "metal-backend"))]
+    if current() == GpuBackend::Metal {
+        return "rune backend";
+    }
+    "wgpu"
+}
+
 #[cfg_attr(not(all(target_os = "macos", feature = "metal-backend")), allow(dead_code))]
 fn resolve(env: Option<&str>, chosen: GpuBackend) -> GpuBackend {
     match env {

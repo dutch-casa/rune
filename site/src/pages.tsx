@@ -566,6 +566,12 @@ export function LaunchFastView() {
           <ul>
             <li>Calling it twice does nothing the second time.</li>
             <li>
+              An app that draws with <code>GpuBackend::Metal</code> calls{" "}
+              <code>rune::prewarm_gpu_on(GpuBackend::Metal)</code> instead. It chooses the backend, then starts the
+              thread, so the work doesn't start on wgpu and start over when <code>App::gpu_backend</code> runs; that
+              call afterwards changes nothing.
+            </li>
+            <li>
               If the app opens no window at launch, the result is dropped and nothing stays in memory. A{" "}
               <code>windowless</code> app that opens its window later makes the device then, as it always did.
             </li>
