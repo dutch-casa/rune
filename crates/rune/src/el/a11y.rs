@@ -115,8 +115,16 @@ impl El {
         self
     }
     /// Declare a mixed checked state.
+    ///
+    /// `true` marks the control mixed and creates a check state when it had none.
+    /// `false` clears only the mixed flag. A control that was never checked stays
+    /// not checkable.
     pub fn indeterminate(mut self, indeterminate: bool) -> Self {
-        self.a11y.checked.get_or_insert_default().indeterminate = indeterminate;
+        if indeterminate {
+            self.a11y.checked.get_or_insert_default().indeterminate = true;
+        } else if let Some(state) = self.a11y.checked.as_mut() {
+            state.indeterminate = false;
+        }
         self
     }
     /// Keep this element and its descendants visible and in the accessibility tree, and out of
@@ -238,5 +246,15 @@ mod tests {
             }));
             assert!(failed.is_err(), "{value} in {min}..={max} must be rejected");
         }
+    }
+
+    #[test]
+    fn indeterminate_false_does_not_make_a_control_checkable() {
+        assert!(el().indeterminate(false).a11y.checked.is_none());
+        let mixed = el().checked(true).indeterminate(true).indeterminate(false);
+        assert_eq!(mixed.a11y.checked, Some(CheckState { checked: true, indeterminate: false }));
+        let off = el().checked(false).indeterminate(false);
+        assert_eq!(off.a11y.checked, Some(CheckState { checked: false, indeterminate: false }));
+        assert!(el().indeterminate(true).a11y.checked.is_some_and(|s| s.indeterminate));
     }
 }

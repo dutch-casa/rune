@@ -1,0 +1,1 @@
+- **`El::indeterminate(false)` no longer makes a control checkable.** It clears the mixed flag when a check state already exists, and leaves an unchecked control that was never checked out of the checkable set.
