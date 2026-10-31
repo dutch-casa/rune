@@ -393,6 +393,33 @@ impl Gpu {
             Some(s) if translucent && !pick.from_env() => crate::render::translucency::prefer(&instance, s, &pick),
             _ => pick.adapter,
         };
+        match Self::device_on(&adapter, wanted) {
+            Ok((device, queue)) => Ok(Gpu { instance, adapter, device, queue }),
+            // A driver that can't make a device (a broken integrated GPU on a hybrid laptop)
+            // leaves the window to the next adapter that presents to its surface.
+            Err(error) => {
+                let first = adapter.get_info();
+                let others = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                    .into_iter()
+                    .filter(|other| {
+                        let info = other.get_info();
+                        (info.name != first.name || info.backend != first.backend)
+                            && surface.is_none_or(|s| other.is_surface_supported(s))
+                            && (!translucent || surface.is_none_or(|s| crate::render::translucency::mode(s, other).is_some()))
+                    });
+                for other in others {
+                    if let Ok((device, queue)) = Self::device_on(&other, wanted) {
+                        eprintln!("rune: {} ({:?}) made no device ({error}); using {}", first.name, first.backend, other.get_info().name);
+                        return Ok(Gpu { instance, adapter: other, device, queue });
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn device_on(adapter: &wgpu::Adapter, wanted: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), String> {
         let optional_features = wgpu::Features::TIMESTAMP_QUERY | wanted;
         #[cfg(target_os = "macos")]
         let optional_features = optional_features | wgpu::Features::PASSTHROUGH_SHADERS;
@@ -418,7 +445,7 @@ impl Gpu {
                     .using_alignment(adapter_limits)
             }
         };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("rune"),
             required_features,
             required_limits,
@@ -426,8 +453,7 @@ impl Gpu {
             memory_hints: wgpu::MemoryHints::Performance,
             trace: Default::default(),
         }))
-        .map_err(|error| format!("no GPU device: {error}"))?;
-        Ok(Gpu { instance, adapter, device, queue })
+        .map_err(|error| format!("no GPU device: {error}"))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -458,10 +484,32 @@ impl Gpu {
         Self::wgpu_instance()
     }
 
-    /// wgpu's own backends, whatever `RUNE_GPU_BACKEND` says.
+    /// wgpu's own backends, whatever `RUNE_GPU_BACKEND` says: DX12 alone on Windows: it's the backend that composites transparent surfaces, and a
+    /// Vulkan instance loads every GPU's Vulkan driver, where a broken one (Intel's, on a hybrid
+    /// laptop) crashed the process before its first window (Hex #662). Vulkan only when no DX12
+    /// adapter exists.
+    #[cfg(target_os = "windows")]
     fn wgpu_instance() -> wgpu::Instance {
         let _serial = GPU_INIT.lock().unwrap_or_else(|e| e.into_inner());
+        let dx12 = Self::wgpu_instance_on(wgpu::Backends::DX12);
+        if !pollster::block_on(dx12.enumerate_adapters(wgpu::Backends::DX12)).is_empty() {
+            dx12
+        } else {
+            eprintln!("rune: no DX12 adapter; drawing with Vulkan");
+            Self::wgpu_instance_on(wgpu::Backends::VULKAN)
+        }
+    }
+
+    /// wgpu's own backends, whatever `RUNE_GPU_BACKEND` says.
+    #[cfg(not(target_os = "windows"))]
+    fn wgpu_instance() -> wgpu::Instance {
+        let _serial = GPU_INIT.lock().unwrap_or_else(|e| e.into_inner());
+        Self::wgpu_instance_on(wgpu::Backends::all())
+    }
+
+    fn wgpu_instance_on(backends: wgpu::Backends) -> wgpu::Instance {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = backends;
         descriptor.flags.remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
         // An HWND's DXGI swapchain is opaque only; DirectComposition composites alpha on every GPU.
         descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
