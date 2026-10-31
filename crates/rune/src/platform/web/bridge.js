@@ -103,7 +103,23 @@ export function mount(canvas, callback, embedded, fitHeight) {
         }
     });
     h.listen(a11y, 'focusout', event => {
-        if (!h.syncing && !a11y.contains(event.relatedTarget) && event.relatedTarget !== canvas) h.send({ kind: 'a11y_blur' });
+        if (h.syncing) return;
+        const next = event.relatedTarget;
+        if (next && (a11y.contains(next) || next === canvas)) return;
+        if (next) {
+            h.send({ kind: 'a11y_blur' });
+            return;
+        }
+        // A null relatedTarget is the window leaving, Safari reporting a move inside this
+        // tree, or a press on the canvas. activeElement has settled by the next frame.
+        const token = (h.focusLeave = (h.focusLeave || 0) + 1);
+        requestAnimationFrame(() => {
+            if (h.disposed || h.syncing || h.focusLeave !== token || h.canvasDown) return;
+            const active = document.activeElement;
+            if (active && (a11y.contains(active) || active === canvas || active === h.textView?.control)) return;
+            if (h.windowBlurred || !document.hasFocus()) return;
+            h.send({ kind: 'a11y_blur' });
+        });
     });
     h.listen(a11y, 'click', event => {
         const node = target(h, event.target);
@@ -146,10 +162,20 @@ export function mount(canvas, callback, embedded, fitHeight) {
             alt: !!event.altKey, meta: !!event.metaKey, repeat: false });
     });
     h.listen(window, 'blur', () => {
+        h.windowBlurred = true;
         for (const [key, down] of h.keys) {
             h.keys.delete(key);
             h.send({ ...down, kind: 'key_up', shift: false, ctrl: false, alt: false, meta: false, repeat: false });
         }
+    });
+    h.listen(window, 'focus', () => {
+        h.windowBlurred = false;
+        if (h.disposed || h.syncing || !document.hasFocus()) return;
+        const active = document.activeElement;
+        if (active && (a11y.contains(active) || active === canvas || active === h.textView?.control)) return;
+        if (!h.focused && !h.parked) return;
+        const element = focusElement(h);
+        if (element && document.activeElement !== element) element.focus({ preventScroll: true });
     });
     h.listen(document, 'copy', event => {
         const active = document.activeElement;
@@ -160,7 +186,13 @@ export function mount(canvas, callback, embedded, fitHeight) {
             event.clipboardData.setData('text/plain', h.copyText);
         }
     });
-    h.listen(canvas, 'pointerdown', event => event.preventDefault(), { capture: true });
+    h.listen(canvas, 'pointerdown', event => {
+        // A canvas press can blur the mirror with a null relatedTarget. It is a hit on the
+        // scene, so the field keeps its focus and composition.
+        h.canvasDown = true;
+        requestAnimationFrame(() => requestAnimationFrame(() => { h.canvasDown = false; }));
+        event.preventDefault();
+    }, { capture: true });
     h.listen(canvas, 'keydown', event => { if (!browserShortcut(event)) event.preventDefault(); });
     if (!fitHeight) {
         h.listen(canvas, 'wheel', event => { if (!event.ctrlKey) event.preventDefault(); }, { passive: false });

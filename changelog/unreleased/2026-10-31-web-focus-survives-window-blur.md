@@ -1,0 +1,1 @@
+- On web, leaving the browser window keeps the focused field and an open composition. Coming back puts the caret where it was.
