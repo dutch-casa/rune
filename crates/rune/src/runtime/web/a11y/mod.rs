@@ -245,6 +245,26 @@ impl<S: 'static> Runtime<S> {
         rect[2] > 0.0 && rect[3] > 0.0
     }
 
+    /// The nearest ancestor's help, skipping truncation-only tips.
+    fn inherited_help(&self, mut parent: Option<usize>) -> Option<String> {
+        while let Some(j) = parent {
+            let node = &self.nodes[j];
+            if !node.help_cut && let Some(help) = node.help.clone() {
+                return Some(help);
+            }
+            parent = node.parent;
+        }
+        None
+    }
+
+    fn inherited_invalid(&self, mut parent: Option<usize>) -> bool {
+        while let Some(j) = parent {
+            if self.nodes[j].a11y.invalid { return true; }
+            parent = self.nodes[j].parent;
+        }
+        false
+    }
+
     fn project_item(&self, node: &super::semantic::SemanticNode) -> A11yItem {
         let i = node.origin;
         let source = &self.nodes[i].a11y;
@@ -281,6 +301,7 @@ impl<S: 'static> Runtime<S> {
     /// * `set_size` and `pos_in_set` on a virtual row: the full count, and the 1-based place in it
     /// * `multiselectable` on a grid, list or tree that selects more than one item
     /// * `tab`, `orientation`, `help`, `modal`, `range` (`{value, min, max}`), `font_size`, `pressable`
+    /// * `sort` (`ascending` or `descending`), `value_text`, `keyshortcuts`
     /// * `edit` for a native editor. A focused field omits its text; the shell keeps the composition.
     ///
     /// `selected` and `pressed` are present only when that state was set, including `false`.
@@ -309,6 +330,10 @@ impl<S: 'static> Runtime<S> {
                 let (base, text, anchor, focus) = if secure || focused { (0, "", 0, 0) }
                     else if readonly { (0, input.edit.text.as_str(), 0, 0) }
                     else { context_window(&input.edit) };
+                // A field sets help and invalid on the textbox shell. The mirror emits the editor,
+                // so those descriptions move onto it. Truncation tooltips (`help_cut`) stay put.
+                if item.help.is_none() { item.help = self.inherited_help(n.parent); }
+                if !item.invalid && self.inherited_invalid(n.parent) { item.invalid = true; }
                 item.edit = Some(A11yEdit { text: (!focused).then(|| text.to_owned()), base, anchor, focus,
                     secure, readonly, single: input.single_line, placeholder: input.placeholder.clone() });
             } else if matches!(node.kind, "text" | "heading" | "label") {

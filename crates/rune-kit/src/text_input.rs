@@ -238,6 +238,9 @@ impl TextInput {
         self.clear = true;
         self
     }
+    /// Marks the field invalid. The outline (and, when the kit paints invalid text, the value)
+    /// turns danger, and the control is `aria-invalid`. This does not set an error string;
+    /// [`Field::error`](crate::Field::error) does both.
     pub fn invalid(mut self, i: bool) -> Self {
         self.invalid = i;
         self

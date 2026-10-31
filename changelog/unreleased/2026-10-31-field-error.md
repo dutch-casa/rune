@@ -1,0 +1,1 @@
+- **`Field::hint` and `Field::error` describe the control.** The prefix, suffix, hint and error are `aria-describedby` on the editor. `Field::error` also marks the control invalid.

@@ -51,9 +51,13 @@ fn view(s: &State, _: &mut Cx<State>) -> El {
                 .child(text("More content")).build(&k))
             .child(Progress::new(Some(0.4)).label("Upload").show_value().build(&k))
             .child(ProgressCircle::new(0.25).build(&k))
-            .child(Field::new().label("Account name").suffix("Enter ready to continue")
-                .control(TextInput::new(&s.edit).invalid(s.edit.text != "ready")
-                    .on_edit(|s: &mut State| &mut s.edit).build(&k)).build(&k))
+            .child({
+                let mut field = Field::new().label("Account name");
+                if s.edit.text != "ready" {
+                    field = field.error("Enter ready to continue");
+                }
+                field.control(TextInput::new(&s.edit).on_edit(|s: &mut State| &mut s.edit).build(&k)).build(&k)
+            })
             .children(s.toast.then(|| Toast::new("saved", "Saved").description("Draft stored")
                 .on_close(|s: &mut State| s.toast = false).build(&k))),
         "combobox" => {

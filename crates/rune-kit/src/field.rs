@@ -15,12 +15,14 @@ pub struct Field {
     info: bool,
     prefix: Option<String>,
     suffix: Option<String>,
+    hint: Option<String>,
+    error: Option<String>,
     control: Option<El>,
 }
 
 impl Field {
     pub fn new() -> Field {
-        Field { label: None, info: false, prefix: None, suffix: None, control: None }
+        Field { label: None, info: false, prefix: None, suffix: None, hint: None, error: None, control: None }
     }
     pub fn label(mut self, l: impl Into<String>) -> Self {
         self.label = Some(l.into());
@@ -39,7 +41,20 @@ impl Field {
         self.suffix = Some(s.into());
         self
     }
-    /// The field's control (a `TextInput`, `TextArea`, …), built with `invalid` set as needed.
+    /// Extra description announced with the control (`aria-describedby`). An empty string clears it.
+    pub fn hint(mut self, h: impl Into<String>) -> Self {
+        let h = h.into();
+        self.hint = (!h.is_empty()).then_some(h);
+        self
+    }
+    /// Marks the control invalid and announces `message` with it. An empty string clears both.
+    pub fn error(mut self, message: impl Into<String>) -> Self {
+        let message = message.into();
+        self.error = (!message.is_empty()).then_some(message);
+        self
+    }
+    /// The field's control (a `TextInput`, `TextArea`, …). [`Self::error`] marks it invalid;
+    /// [`crate::TextInput::invalid`] paints invalid without an error string.
     pub fn control(mut self, c: El) -> Self {
         self.control = Some(c);
         self
@@ -57,19 +72,40 @@ impl Field {
             }
             root = root.child(lab);
         }
-        let aside =
-            |key: &str, s: String| text(s).key(key).w_full().min_h(11.0).font(k.ty.small.lh(11.0)).color(c.text_muted);
+        let aside = |key: &str, s: String| {
+            text(s).key(key).role("none").w_full().min_h(11.0).font(k.ty.small.lh(11.0)).color(c.text_muted)
+        };
+        let described: Vec<String> = [self.prefix.clone(), self.suffix.clone(), self.hint.clone(), self.error.clone()]
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .collect();
         if let Some(p) = self.prefix {
             root = root.child(aside("prefix", p));
         }
-        if let Some(control) = self.control {
-            root = root.child(match self.label.as_deref() {
+        if let Some(mut control) = self.control {
+            if self.error.is_some() {
+                control = control.invalid(true);
+            }
+            if !described.is_empty() {
+                control = control.help(described.join(" "));
+            }
+            control = match self.label.as_deref() {
                 Some(label) => control.label_if_missing(label),
                 None => control,
-            });
+            };
+            root = root.child(control);
         }
         if let Some(s) = self.suffix {
             root = root.child(aside("suffix", s));
+        }
+        if let Some(h) = self.hint {
+            root = root.child(aside("hint", h));
+        }
+        if let Some(e) = self.error {
+            root = root.child(
+                text(e).key("error").role("none").w_full().min_h(11.0).font(k.ty.small.lh(11.0)).color(c.danger.fg),
+            );
         }
         root
     }
