@@ -503,6 +503,8 @@ pub struct El {
     /// `El::level`, `El::expanded`, `El::value_range` and `El::invalid`.
     pub(crate) a11y: A11y,
     pub(crate) inert: bool,
+    /// `El::disabled` on this element. Flattening ORs ancestors into the node's flag.
+    pub(crate) disabled: bool,
 }
 
 fn base(dir: FlexDirection) -> El {
@@ -565,6 +567,7 @@ fn base(dir: FlexDirection) -> El {
         selection_group: false,
         a11y: A11y::default(),
         inert: false,
+        disabled: false,
     }
 }
 
@@ -943,7 +946,8 @@ impl El {
     pub fn video(self, video: &crate::Player, fit: crate::SurfaceFit) -> Self {
         self.native_surface(video.surface(), fit)
     }
-    /// Opt into keyboard and pointer focus. Disabled controls must set this false.
+    /// Opt into keyboard and pointer focus. [`El::disabled`] already keeps the control and its
+    /// descendants out of focus, so a disabled control can leave this set.
     pub fn focusable(mut self, enabled: bool) -> Self {
         self.focus.enabled = enabled;
         self

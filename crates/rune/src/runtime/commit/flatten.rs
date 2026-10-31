@@ -378,6 +378,7 @@ fn flatten_owned(
         selection_group,
         a11y,
         inert,
+        disabled,
         ..
     } = el;
     if let Some(sx) = parent_sx {
@@ -385,8 +386,7 @@ fn flatten_owned(
     }
     let text_meta = prepare_text(&mut text, input.as_deref(), scale);
     let inert = inert || parent.is_some_and(|p| nodes[p].inert);
-    let mut a11y = a11y;
-    a11y.disabled |= parent.is_some_and(|p| nodes[p].a11y.disabled);
+    let disabled = disabled || parent.is_some_and(|p| nodes[p].disabled);
     let hover_within = inherit_hover_within(&vis, above.as_ref(), parent, nodes);
     let pixel_aspect = vis.pixels.as_ref()
         .filter(|_| style.aspect_ratio.is_none() && style.size.width.is_auto() != style.size.height.is_auto())
@@ -468,6 +468,7 @@ fn flatten_owned(
         streaming,
         whole,
         inert,
+        disabled,
         scale_track: false,
         group_fade: false,
         virtual_mount,
@@ -560,6 +561,7 @@ fn flatten_ref(
     let input = el.input.clone();
     let text_meta = prepare_text(&mut text, input.as_deref(), scale);
     let inert = el.inert || parent.is_some_and(|p| nodes[p].inert);
+    let disabled = el.disabled || parent.is_some_and(|p| nodes[p].disabled);
     let vis = el.vis.clone();
     let hover_within = inherit_hover_within(&vis, el.above.as_ref(), parent, nodes);
     let pixel_aspect = vis.pixels.as_ref()
@@ -673,6 +675,7 @@ fn flatten_ref(
         streaming: el.streaming,
         whole: el.whole,
         inert,
+        disabled,
         scale_track: false,
         group_fade: false,
         virtual_mount: el.virtual_mount,

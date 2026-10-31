@@ -36,6 +36,7 @@ fn assert_same_state<S: 'static>(memo_rt: &Runtime<S>, fresh_rt: &Runtime<S>, st
         assert_eq!(a.target, b.target, "{step}: node[{idx}] target ({})", a.path);
         assert_eq!(a.inset, b.inset, "{step}: node[{idx}] inset ({})", a.path);
         assert_eq!(a.inert, b.inert, "{step}: node[{idx}] inert ({})", a.path);
+        assert_eq!(a.disabled, b.disabled, "{step}: node[{idx}] disabled ({})", a.path);
         assert_eq!(a.scale_track, b.scale_track, "{step}: node[{idx}] scale_track ({})", a.path);
         assert_eq!(a.group_fade, b.group_fade, "{step}: node[{idx}] group_fade ({})", a.path);
         assert_eq!(a.elided, b.elided, "{step}: node[{idx}] elided ({})", a.path);
@@ -57,8 +58,8 @@ fn assert_same_state<S: 'static>(memo_rt: &Runtime<S>, fresh_rt: &Runtime<S>, st
     assert_eq!(ea.len(), eb.len(), "{step}: ElementInfo count");
     for (i, (a, b)) in ea.iter().zip(&eb).enumerate() {
         assert_eq!(
-            (&a.path, &a.key, a.exiting, a.focused, a.focus_visible, a.inert, &a.text, &a.selected, a.caret),
-            (&b.path, &b.key, b.exiting, b.focused, b.focus_visible, b.inert, &b.text, &b.selected, b.caret),
+            (&a.path, &a.key, a.exiting, a.focused, a.focus_visible, a.inert, a.disabled, &a.text, &a.selected, a.caret),
+            (&b.path, &b.key, b.exiting, b.focused, b.focus_visible, b.inert, b.disabled, &b.text, &b.selected, b.caret),
             "{step}: ElementInfo[{i}] identity/state",
         );
         assert_eq!(

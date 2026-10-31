@@ -291,7 +291,7 @@ impl<S: 'static> Runtime<S> {
             level: if kind == "treeitem" { n.a11y.level } else { None },
             expanded: n.a11y.expanded, text: String::new(), runs: Vec::new(),
             name, labelled_by: None, parent, tab,
-            disabled: n.a11y.disabled,
+            disabled: n.disabled,
             checked: n.a11y.checked.map(|s| if s.indeterminate { "mixed" } else if s.checked { "true" } else { "false" }),
             selected: n.focus.selected, active_descendant: None,
             controls: None, orientation: n.a11y.orientation, pressable: self.press_capable(i),

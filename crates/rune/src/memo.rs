@@ -931,6 +931,77 @@ mod tests {
         assert!(built.key_location().starts_with(&format!("{}:{line}:", file!())), "{}", built.key_location());
     }
 
+    struct Gate {
+        off: bool,
+        presses: u32,
+    }
+
+    fn gated(s: &Gate, _: &mut Cx<Gate>) -> El {
+        let card = memo("card", 0u32, || {
+            counted(col().child(
+                el().key("button").size(40.0, 40.0).fill(crate::Color::WHITE).focusable(true)
+                    .on_press(|s: &mut Gate| s.presses += 1),
+            ))
+        });
+        let gate = if s.off { col().key("gate").disabled(true) } else { col().key("gate") };
+        el().key("canvas").size(200.0, 200.0).on_press(|s: &mut Gate| s.presses += 10).child(gate.child(card))
+    }
+
+    fn button_info(rt: &Runtime<Gate>) -> crate::ElementInfo {
+        rt.elements().into_iter().find(|e| e.key.as_deref() == Some("button")).unwrap()
+    }
+
+    #[test]
+    fn a_disabled_parent_blocks_input_to_a_memo_child() {
+        BUILDS.set(0);
+        let mut rt = Runtime::new(Gate { off: true, presses: 0 }, gated, (200.0, 200.0), Env::default());
+        rt.frame(0.0);
+        assert_eq!(BUILDS.get(), 1);
+        let button = button_info(&rt);
+        assert!(button.disabled, "the memo child inherits the parent's disabled flag");
+        rt.pointer_move(20.0, 20.0);
+        rt.pointer_down(20.0, 20.0);
+        rt.pointer_up(20.0, 20.0);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.presses, 10, "the click reaches the canvas behind the disabled memo");
+        rt.key(crate::KeyEvent { key: crate::Key::Tab, mods: Default::default() });
+        rt.frame(1.0 / 60.0);
+        assert!(!button_info(&rt).focused, "Tab skips the disabled memo child");
+        assert_eq!(BUILDS.get(), 1);
+    }
+
+    #[test]
+    fn an_ancestor_toggling_disabled_reuses_the_memo() {
+        BUILDS.set(0);
+        let mut rt = Runtime::new(Gate { off: false, presses: 0 }, gated, (200.0, 200.0), Env::default());
+        rt.frame(0.0);
+        assert_eq!(BUILDS.get(), 1);
+        assert!(!button_info(&rt).disabled);
+        rt.pointer_move(20.0, 20.0);
+        rt.pointer_down(20.0, 20.0);
+        rt.pointer_up(20.0, 20.0);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.presses, 1, "the memo child takes the press while its ancestor is enabled");
+        rt.update(|s, _| s.off = true);
+        commit(&mut rt);
+        assert_eq!(BUILDS.get(), 1, "toggling an ancestor's disabled flag reuses the memo");
+        assert!(button_info(&rt).disabled);
+        rt.pointer_move(20.0, 20.0);
+        rt.pointer_down(20.0, 20.0);
+        rt.pointer_up(20.0, 20.0);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.presses, 11, "the same click now reaches the canvas");
+        rt.update(|s, _| s.off = false);
+        commit(&mut rt);
+        assert_eq!(BUILDS.get(), 1);
+        assert!(!button_info(&rt).disabled);
+        rt.pointer_move(20.0, 20.0);
+        rt.pointer_down(20.0, 20.0);
+        rt.pointer_up(20.0, 20.0);
+        rt.frame(1.0 / 60.0);
+        assert_eq!(rt.state.presses, 12, "clearing disabled restores the memo child's press");
+    }
+
     /// `cargo test -p rune --profile perf --lib memo_build_time -- --ignored --nocapture`
     #[test]
     #[ignore]

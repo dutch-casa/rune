@@ -1,0 +1,1 @@
+- A `memo` under `El::disabled` takes no pointer or keyboard input, and toggling that ancestor keeps the memo. A click on a disabled element reaches whatever is drawn behind it.

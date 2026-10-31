@@ -40,7 +40,6 @@ pub(crate) struct A11y {
     pub level: Option<u32>,
     pub expanded: Option<bool>,
     pub secure: bool,
-    pub disabled: bool,
     pub invalid: bool,
     pub label_source: LabelSource,
     pub checked: Option<CheckState>,
@@ -67,10 +66,13 @@ impl El {
         self.a11y.checked.get_or_insert_default().indeterminate = indeterminate;
         self
     }
-    /// Exclude this element and its descendants from hit testing and keyboard focus.
-    /// Content stays visible. This does not change the bound editor's value.
+    /// Keep this element and its descendants visible and in the accessibility tree, and out of
+    /// pointer and keyboard input. A click, hover, scroll or drop passes through to whatever is
+    /// drawn behind, as with [`El::inert`](crate::El::inert). Tab skips the subtree, and focus
+    /// already inside drops. Unlike `inert`, a disabled control stays exposed as disabled, so it
+    /// can still be read. This does not change a bound editor's value. Passing `false` clears it.
     pub fn disabled(mut self, disabled: bool) -> Self {
-        self.a11y.disabled = disabled;
+        self.disabled = disabled;
         self
     }
     /// A placeholder a field caption may replace.

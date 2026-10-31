@@ -10,6 +10,7 @@ pub(crate) struct InheritedFlatten {
     pub(super) parent_is_stack: bool,
     pub(super) instant_changes: bool,
     pub(super) inert: bool,
+    pub(super) disabled: bool,
     pub(super) trace_namespace: Option<(&'static str, &'static str)>,
     pub(super) scale_bits: u32,
 }
@@ -388,6 +389,7 @@ pub(super) fn same_root_el(el: &El, built: &crate::memo::Built) -> bool {
         selection_group,
         a11y,
         inert,
+        disabled,
     } = base;
 
     el.children.is_empty()
@@ -441,6 +443,7 @@ pub(super) fn same_root_el(el: &El, built: &crate::memo::Built) -> bool {
         && el.selection_group == *selection_group
         && el.a11y == *a11y
         && el.inert == *inert
+        && el.disabled == *disabled
 }
 
 pub(super) fn inherited_for(
@@ -453,6 +456,7 @@ pub(super) fn inherited_for(
     let parent_is_stack = parent.is_some_and(|p| nodes[p].growth.is_some());
     let instant_changes = parent.is_some_and(|p| nodes[p].instant_changes);
     let inert = parent.is_some_and(|p| nodes[p].inert);
+    let disabled = parent.is_some_and(|p| nodes[p].disabled);
     let trace_namespace = parent.and_then(|p| nodes[p].trace_namespace);
     let hover_within = parent.and_then(|p| nodes[p].hover_within.clone());
     (
@@ -462,6 +466,7 @@ pub(super) fn inherited_for(
             parent_is_stack,
             instant_changes,
             inert,
+            disabled,
             trace_namespace,
             scale_bits: scale.to_bits(),
         },

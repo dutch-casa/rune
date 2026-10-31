@@ -66,7 +66,7 @@ pub struct ElementInfo {
     pub checked: Option<bool>,
     /// [`El::indeterminate`].
     pub mixed: bool,
-    /// [`El::disabled`]. Content stays visible; input does not.
+    /// [`El::disabled`] on this element or an ancestor. Content stays visible; input does not.
     pub disabled: bool,
     /// [`El::invalid`].
     pub invalid: bool,
@@ -306,7 +306,7 @@ impl<S: 'static> Runtime<S> {
                     expanded: n.a11y.expanded,
                     checked: n.a11y.checked.map(|s| s.checked),
                     mixed: n.a11y.checked.is_some_and(|s| s.indeterminate),
-                    disabled: n.a11y.disabled,
+                    disabled: n.disabled,
                     invalid: n.a11y.invalid,
                     range: n.a11y.range,
                     item_selected: n.focus.selected,

@@ -83,9 +83,9 @@ impl<S: 'static> Runtime<S> {
     pub(super) fn in_scope(&self, i: usize) -> bool {
         self.nodes.get(i).is_some_and(|n| !n.inert) && (self.active_modal().is_none() || self.modal_members.get(i).copied().unwrap_or(false))
     }
-    /// Input admission is stricter than semantic exposure: disabled content stays readable.
+    /// A disabled subtree stays visible and readable, and takes no pointer or key.
     pub(super) fn accepts_input(&self, i: usize) -> bool {
-        self.in_scope(i) && !self.nodes[i].a11y.disabled
+        self.in_scope(i) && !self.nodes[i].disabled
     }
     pub(super) fn can_focus(&self, i: usize) -> bool {
         let n = &self.nodes[i];
@@ -245,7 +245,7 @@ impl<S: 'static> Runtime<S> {
         };
         let shown = |idx: usize| {
             let n = &nodes[idx];
-            !n.inert && !n.a11y.disabled && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
+            !n.inert && !n.disabled && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
                 && std::iter::successors(n.parent, |&p| nodes[p].parent).all(|p| nodes[p].vis.opacity > 0.0)
         };
         let restore = self.nodes.iter().enumerate().rev().find_map(|(i, old)| {
@@ -273,7 +273,7 @@ impl<S: 'static> Runtime<S> {
                 .map(|j| nodes[j].path.clone())
         });
         let input_focused = self.focused.as_deref().is_some_and(|p| {
-            nodes.iter().any(|n| n.path == p && !n.inert && !n.a11y.disabled && n.input.as_ref().is_some_and(|i| i.access.is_some() && i.edit.focused))
+            nodes.iter().any(|n| n.path == p && !n.inert && !n.disabled && n.input.as_ref().is_some_and(|i| i.access.is_some() && i.edit.focused))
                 || self.virtual_inputs.get(p).is_some_and(|i| i.edit.focused)
         });
         let was_focused = |edit: &crate::edit::TextEdit, path: &str| {
@@ -310,7 +310,7 @@ impl<S: 'static> Runtime<S> {
         let changed = self.set_focus(next, self.keyboard_focus);
         std::mem::swap(&mut self.nodes, nodes);
         self.nodes_replaced();
-        if self.input_click.dragging_path().is_some_and(|p| !nodes.iter().any(|n| n.path == p && !n.inert && !n.a11y.disabled && n.input.is_some())) {
+        if self.input_click.dragging_path().is_some_and(|p| !nodes.iter().any(|n| n.path == p && !n.inert && !n.disabled && n.input.is_some())) {
             self.input_click.drop_drag();
         }
         if self.capture.is_none() {
