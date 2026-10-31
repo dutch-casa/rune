@@ -1065,7 +1065,11 @@ impl<S: 'static> Runtime<S> {
                         Some([vw, vh]) => [w / vw, h / vh],
                         None => [k_px, k_px],
                     };
-                    push_shape(&mut self.instances, shape, [r[0], r[1]], k, k_px, o, srgb, clip, fade);
+                    if p.draw < 1.0 {
+                        push_shape(&mut self.instances, &shape.drawn(p.draw), [r[0], r[1]], k, k_px, o, srgb, clip, fade);
+                    } else {
+                        push_shape(&mut self.instances, shape, [r[0], r[1]], k, k_px, o, srgb, clip, fade);
+                    }
                 }
                 if let Some(pixels) = &n.vis.pixels {
                     let (rect, crop) = crate::pixels::fit(n.vis.pixels_fit, n.vis.surface_place, [r[0], r[1], w, h], pixels.size());

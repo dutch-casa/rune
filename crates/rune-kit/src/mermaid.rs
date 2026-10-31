@@ -22,16 +22,19 @@ use rune::El;
 
 use crate::markdown::{DiagramPaint, MarkdownStyle};
 
-pub use rune_mermaid::{DiagramStyle, Hover, supported};
+pub use rune_mermaid::{DiagramStyle, Hover, may_draw, supported};
 
 /// `src` drawn as a diagram card with `style`'s diagram colours, or `None` when it is outside
 /// the supported subset.
 pub fn render(src: &str, style: &MarkdownStyle) -> Option<El> {
-    diagram(src, &style.diagram)
+    diagram(src, &style.diagram, false)
 }
 
-pub(crate) fn diagram(src: &str, paint: &DiagramPaint) -> Option<El> {
-    rune_mermaid::render_with_hover(
+/// `streaming`: `src` is the complete lines of a fence still arriving, so what's new since the
+/// last build comes in on its own ([`rune_mermaid::render_streaming`]).
+pub(crate) fn diagram(src: &str, paint: &DiagramPaint, streaming: bool) -> Option<El> {
+    let render = if streaming { rune_mermaid::render_streaming } else { rune_mermaid::render_with_hover };
+    render(
         src,
         &DiagramStyle {
             text: paint.text,

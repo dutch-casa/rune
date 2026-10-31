@@ -1,9 +1,10 @@
 //! Vector canvas, text measurement, geometry primitives and scene assembly for [`crate::render`].
 
-use rune::{Align, Color, El, LineCap, Shape, TextStyle, canvas, col, el, text};
+use rune::{Align, Color, El, LineCap, Shape, TextStyle, Transition, canvas, col, el, text};
 
 use crate::DiagramStyle;
 use crate::hover::{Hover, Spot, Trace};
+use crate::parts::{LabelKey, Mark, Names, Piece, pieces};
 
 /// The card's padding on each side.
 const CARD_PAD: f32 = 16.0;
@@ -107,6 +108,12 @@ pub(crate) struct Canvas {
     /// Per edge: its ends and its drawing in the hover colour.
     pub(crate) traces: Vec<Trace>,
     pub(crate) hover: Option<(Hover, Color)>,
+    /// Where each node, edge and frame's drawing starts ([`Canvas::part`]), and their names.
+    pub(crate) marks: Vec<Mark>,
+    pub(crate) names: Names,
+    /// A horizontal diagram turned vertical to fit: its edges are keyed apart from the
+    /// horizontal ones'.
+    pub(crate) turned: bool,
 }
 
 impl Canvas {
@@ -187,7 +194,9 @@ impl Canvas {
 
     /// Draws `other` over this.
     pub(crate) fn append(&mut self, other: Canvas) {
-        let shift = self.labels.len();
+        let (base, shift) = (self.ops.len(), self.labels.len());
+        self.marks.push((base, shift, None));
+        self.marks.extend(other.marks.into_iter().map(|(o, l, p)| (o + base, l + shift, p)));
         self.ops.extend(other.ops);
         self.labels.extend(other.labels);
         self.traces.extend(other.traces.into_iter().map(|t| Trace { label: t.label.map(|(i, g)| (i + shift, g)), ..t }));
@@ -228,33 +237,32 @@ impl Canvas {
         }
         crate::ink::flatten(&mut self.ops, &mut self.traces, paint.surface);
         let b = self.bounds();
-        let pad = 1.0;
-        let map = |p: [f32; 2]| [(p[0] - b[0]) * scale + pad, (p[1] - b[1]) * scale + pad];
+        // Drawn at full size and shrunk whole by `scale` (see [`Scene::el`]), so a diagram
+        // growing past the room it has springs smaller instead of each label jumping a size.
+        // Lines thin no further than 80%.
+        let pad = 1.0 / scale;
+        let map = |p: [f32; 2]| [p[0] - b[0] + pad, p[1] - b[1] + pad];
+        let stroke = |w: f32| w * scale.max(0.8) / scale;
         let paint = |shape: Shape, op: &Op| match op {
             Op::Fill(points, color) => shape.fill(points.iter().map(|&p| map(p)).collect::<Vec<_>>(), *color),
             Op::Stroke { points, closed, width, cap, color } => {
-                shape.stroke_with(points.iter().map(|&p| map(p)).collect::<Vec<_>>(), *closed, width * scale.max(0.8), *cap, *color)
+                shape.stroke_with(points.iter().map(|&p| map(p)).collect::<Vec<_>>(), *closed, stroke(*width), *cap, *color)
             }
         };
-        let shape = self.ops.iter().fold(Shape::new(), paint);
+        let (pieces, label_keys) = pieces(&self, map, stroke);
         let hovers = self.hovers(map, paint);
-        let labels = self
-            .labels
-            .into_iter()
-            .map(|l| Label {
-                at: map(l.at),
-                size: [l.size[0] * scale, l.size[1] * scale],
-                font: TextStyle { size: l.font.size * scale, line_height: l.font.line_height * scale, ..l.font },
-                ..l
-            })
-            .collect();
-        let size = [(b[2] - b[0]) * scale + 2.0 * pad, (b[3] - b[1]) * scale + 2.0 * pad];
+        let labels = self.labels.into_iter().map(|l| Label { at: map(l.at), ..l }).collect();
+        let full = [b[2] - b[0] + 2.0 * pad, b[3] - b[1] + 2.0 * pad];
+        let size = [full[0] * scale, full[1] * scale];
         let lit = self.hover.map_or(Color::TRANSPARENT, |h| h.1);
         Some(Scene {
             title: None,
             size,
-            shape,
+            full,
+            scale,
+            pieces,
             labels,
+            label_keys,
             hovers,
             lit,
             #[cfg(test)]
@@ -266,14 +274,21 @@ impl Canvas {
 /// A laid-out diagram, drawn the same way every build.
 pub(crate) struct Scene {
     pub(crate) title: Option<String>,
+    /// The size it's drawn at: [`Self::full`] times [`Self::scale`].
     pub(crate) size: [f32; 2],
-    shape: Shape,
+    /// The size its pieces, labels and hovers are laid out in, before it shrinks to fit.
+    pub(crate) full: [f32; 2],
+    /// How much it shrinks to fit the room it has.
+    pub(crate) scale: f32,
+    /// Each node, edge and frame's drawing, and the rest, in drawing order.
+    pub(crate) pieces: Vec<Piece>,
     pub(crate) labels: Vec<Label>,
+    pub(crate) label_keys: Vec<LabelKey>,
     /// The hover groups over edges, edge labels and nodes, and what each lights up.
     pub(crate) hovers: Vec<Spot>,
     /// The hover colour.
     lit: Color,
-    /// What `shape` draws, in the diagram's own points.
+    /// What the pieces draw, in the diagram's own points.
     #[cfg(test)]
     pub(crate) ops: Vec<Op>,
 }
@@ -286,27 +301,49 @@ impl Scene {
         self
     }
 
-    pub(crate) fn el(&self, paint: &DiagramStyle) -> El {
-        let [w, h] = self.size;
-        let mut body = el().key("diagram").size(w, h).child(canvas(self.shape.clone()).key("shape").absolute(0.0, 0.0).size(w, h));
-        let label = |l: &Label, color: Color, at: [f32; 2]| {
+    /// The diagram card. `streaming`: its source is still arriving, so each node, edge and frame
+    /// new since the last build comes in on its own ([`crate::parts::Kind::enter`]); otherwise
+    /// everything shows the frame it mounts.
+    pub(crate) fn el(&self, paint: &DiagramStyle, streaming: bool) -> El {
+        let [w, h] = self.full;
+        let still = |t: Transition| if streaming { t } else { Transition::none() };
+        let mut body = el().key("fit").absolute(0.0, 0.0).size(w, h).origin(0.0, 0.0).scale(self.scale).transition(Transition::none());
+        for p in &self.pieces {
+            body = body.child(p.el(streaming));
+        }
+        let label = |l: &Label, color: Color| {
             // A point of slack so rounding never breaks a measured line.
-            let t = text(l.text.clone()).font(l.font).color(color).align(l.align).w(l.size[0] + 2.0).absolute(at[0] - 1.0, at[1]);
+            let t = text(l.text.clone()).font(l.font).color(color).align(l.align).w(l.size[0] + 2.0);
             if l.wrap { t.wrap() } else { t }
         };
-        for (i, l) in self.labels.iter().enumerate() {
-            body = body.child(label(l, l.color, l.at).key(format!("t{i}")));
+        // Labels and hover groups are placed by offset, as pieces are ([`Piece::el`]).
+        for (l, (key, kind)) in self.labels.iter().zip(&self.label_keys) {
+            let (enter, delay) = kind.map_or((Transition::opacity(), 0.0), |k| k.label_enter());
+            let mut t = label(l, l.color).absolute(0.0, 0.0).offset(l.at[0] - 1.0, l.at[1]).key(key.clone()).transition(still(enter));
+            if streaming && delay > 0.0 {
+                t = t.enter_delay(delay);
+            }
+            body = body.child(t);
         }
-        // Over the labels, so a lit label's backing covers the one it lights.
+        // Over the labels, so a lit label's backing covers the one it lights. Unlit until
+        // hovered, so they never animate in and their drawing moves at once. One a streaming
+        // rebuild drops fades out, unseen, rather than cutting.
         for s in &self.hovers {
             let r = s.rect;
-            let mut glow = el().absolute(-r[0], -r[1]).size(w, h).group_opacity(0.0, 1.0).child(canvas(s.lit.clone()).key("lit").absolute(0.0, 0.0).size(w, h));
+            let mut glow = el()
+                .absolute(-r[0], -r[1])
+                .size(w, h)
+                .group_opacity(0.0, 1.0)
+                .instant_changes()
+                .transition(Transition::none())
+                .child(canvas(s.lit.clone()).key("lit").absolute(0.0, 0.0).size(w, h).transition(Transition::none()));
             for &i in &s.labels {
                 if let Some(l) = self.labels.get(i) {
-                    glow = glow.child(label(l, self.lit, l.at).key(format!("t{i}")));
+                    glow = glow.child(label(l, self.lit).absolute(l.at[0] - 1.0, l.at[1]).key(format!("t{i}")).transition(Transition::none()));
                 }
             }
-            body = body.child(el().key(s.key.clone()).absolute(r[0], r[1]).size(r[2], r[3]).hover_group().child(glow));
+            let exit = if streaming { Transition { insertion: rune::Effect::IDENTITY, ..Transition::opacity() } } else { Transition::none() };
+            body = body.child(el().key(s.key.clone()).absolute(0.0, 0.0).offset(r[0], r[1]).size(r[2], r[3]).hover_group().transition(exit).child(glow));
         }
         let mut card = col()
             .w_full()
@@ -315,12 +352,14 @@ impl Scene {
             .radius(6.0)
             .fill(paint.surface)
             .border(0.5, paint.surface_border)
-            .clip_rounded(6.0);
+            .clip_rounded(6.0)
+            .animate_layout()
+            .transition(still(Transition::opacity()));
         if let Some(title) = &self.title {
             let tf = TextStyle { size: paint.font.size + 1.0, line_height: paint.font.line_height + 2.0, weight: 600.0, ..paint.font };
-            card = card.gap(12.0).child(text(title.clone()).key("title").font(tf).color(paint.text));
+            card = card.gap(12.0).child(text(title.clone()).key("title").font(tf).color(paint.text).transition(still(Transition::opacity())));
         }
-        card.child(body)
+        card.child(el().key("diagram").size(self.size[0], self.size[1]).transition(still(Transition::opacity())).child(body))
     }
 }
 

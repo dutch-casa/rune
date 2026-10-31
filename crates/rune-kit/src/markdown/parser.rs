@@ -128,8 +128,9 @@ pub(super) struct Cut {
     pub(super) tasks: usize,
 }
 
-/// What colours a [`Block::Code`], one per block in document order (the order the renderer
-/// meets them). Kept beside the blocks so `Block` keeps its shape.
+/// What colours a [`Block::Code`] and which lines of a [`Block::Mermaid`] draw, one per block in
+/// document order (the order the renderer meets them). Kept beside the blocks so `Block` keeps
+/// its shape.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Source {
     /// The fence's language as written (its info string's first word), if it names one.
@@ -137,8 +138,11 @@ pub(super) struct Source {
     /// The code's length, to check this belongs to the block it is matched with.
     pub(super) len: usize,
     /// How many leading bytes get colour: all of them, or while an unclosed fence streams in,
-    /// the complete lines (the line still arriving draws plain until its newline).
+    /// the complete lines (the line still arriving draws plain until its newline). A diagram
+    /// draws from these lines alone.
     pub(super) coloured: usize,
+    /// The fence's closing line hasn't arrived.
+    pub(super) open: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -197,14 +201,14 @@ impl Builder {
         }
         map.truncate_out(text.len());
         let block = code_block(text, &fence);
-        if let Block::Code(code) = &block {
+        if let Block::Code(code) | Block::Mermaid(code) = &block {
             let (lang, closed) = match fence {
                 Fence::Plain(lang, closed) => (lang, closed),
-                // A mermaid fence still arriving.
-                _ => (Some("mermaid".into()), false),
+                Fence::Mermaid(closed) => (Some("mermaid".into()), closed),
+                Fence::Diff => (None, true),
             };
             let coloured = if closed || line_ended { code.len() } else { code.rfind('\n').unwrap_or(0) };
-            self.sources.push(Source { lang, len: code.len(), coloured });
+            self.sources.push(Source { lang, len: code.len(), coloured, open: !closed });
         }
         self.push(block, BlockMap::Code(map));
     }
@@ -573,9 +577,9 @@ pub(super) fn parse_doc(src: &str, autolink: bool) -> (Vec<Block>, Vec<Source>, 
 
 fn code_block(text: String, fence: &Fence) -> Block {
     match fence {
-        Fence::Plain(..) | Fence::Mermaid(false) => Block::Code(text),
+        Fence::Plain(..) => Block::Code(text),
         Fence::Diff => Block::Diff(text),
-        Fence::Mermaid(true) => Block::Mermaid(text),
+        Fence::Mermaid(_) => Block::Mermaid(text),
     }
 }
 

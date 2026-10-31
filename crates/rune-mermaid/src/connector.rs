@@ -5,6 +5,7 @@ use rune::{Align, Color, TextStyle};
 
 use super::canvas::{Canvas, Measured, arrowhead, diamond_head, ellipse, lerp, rounded_rect, smooth, unit};
 use super::layered_draw::{Edge, Head, Line};
+use super::parts::{Kind, Part};
 use super::route::{Ctx, Route};
 use super::{DiagramStyle, adapt_stroke};
 
@@ -65,6 +66,7 @@ pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<
         })
         .collect();
     for (i, e) in edges.iter().enumerate() {
+        c.part(Some(Part::Index(Kind::Edge, i)));
         let start = c.ops.len();
         let (color, _) = pen(e, paint);
         let back = backs.get(i).copied().unwrap_or(paint.surface);
@@ -100,6 +102,7 @@ pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<
         let lit_label = lit_label.filter(|l| l.0 < c.labels.len());
         c.trace(e.from, e.to, start, color, lit_label);
     }
+    c.part(None);
 }
 
 /// The runs of `curve` outside `rect` (`[x0, y0, x1, y1]`), cut where they cross its edge.

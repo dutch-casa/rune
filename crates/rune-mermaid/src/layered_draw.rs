@@ -8,6 +8,7 @@ use super::chart::small;
 use super::connector::{self, label_box, title_box};
 use super::layered::{GCluster, GEdge, Graph, Spacing, layout};
 use super::route::Ctx;
+use super::parts::{Kind, Part};
 use super::shape;
 pub(crate) use super::shape::{NodeShape, boundary, node_size, outline};
 use super::{DiagramStyle, EdgeStyle, Hover, NodeStyle};
@@ -197,6 +198,7 @@ pub(crate) fn layered_canvas(
         let down = draw_in(if dir == Dir::Right { Dir::Down } else { Dir::Up }, &parts, fonts, spacing, paint, hover)?;
         if down.width() < canvas.width() {
             canvas = down;
+            canvas.turned = true;
         }
     }
     Some(canvas)
@@ -273,6 +275,7 @@ fn draw_in(dir: Dir, p: &Parts, fonts: Fonts, spacing: &Spacing, paint: &Diagram
             continue;
         }
         let (p0, p1) = (pt([b[0], b[1]]), pt([b[2], b[3]]));
+        c.part(Some(Part::Index(Kind::Frame, i)));
         c.shape(rounded_rect(p0[0], p0[1], p1[0], p1[1], 6.0), paint.cluster_fill, cluster_border, 1.0);
         let at = [p0[0] + TITLE_INSET[0], p0[1] + TITLE_INSET[1]];
         c.label_at(&titles[i], at, fonts.title, paint.muted, Align::Start);
@@ -302,8 +305,10 @@ fn draw_in(dir: Dir, p: &Parts, fonts: Fonts, spacing: &Spacing, paint: &Diagram
 
     for (i, n) in nodes.iter().enumerate() {
         c.region(i, outline(n.shape(), centers[i], n.size()));
+        c.part(Some(Part::Index(Kind::Node, i)));
         draw_node(&mut c, n, centers[i], paint);
     }
+    c.part(None);
     Some(c)
 }
 

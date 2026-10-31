@@ -4,7 +4,8 @@
 //! rendered from a [`MarkdownStyle`]. Fences in rust,
 //! js, ts, tsx, json, python, go, swift, sh, sql, html, css and yaml are syntax-coloured by
 //! [`crate::syntax`], or by an app's own highlighter ([`Markdown::highlight`]). Partial input
-//! while streaming is fine: an unclosed fence is a code block that keeps growing.
+//! while streaming is fine: an unclosed fence is a code block that keeps growing (a diagram
+//! fence draws as it grows; see Diagrams).
 //!
 //! ```ignore
 //! let view = Markdown::new(&message.text).reveal(0.18).on_link(|s: &mut App, url| s.open(url)).build(&kit);
@@ -30,8 +31,12 @@
 //! whole, and a table ending it sizes to every row. A trailing `| a | b |` line is already drawn
 //! as the header it is about to become.
 //!
-//! **Diagrams** (`mermaid` feature) render once their fence closes; until then, and for anything
-//! the subset doesn't cover, the source shows as a code block.
+//! **Diagrams** (`mermaid` feature) draw from their complete lines while the fence is still
+//! open, and the source shows as a code block only for what the subset doesn't cover. With
+//! [`Markdown::streaming`] on, nothing shows until the first lines read (never a flash of the
+//! source), then each new node fades and grows in, each edge draws on from its source to its
+//! target, and what's there glides to its new place; the closing fence changes nothing. Off, a
+//! diagram shows whole the frame it mounts.
 
 use std::cell::{Cell, RefCell};
 use std::hash::{Hash, Hasher};
@@ -107,7 +112,7 @@ pub enum Block {
     Table(Table),
     /// A ```` ```diff ```` (or `patch`) fence.
     Diff(String),
-    /// A closed ```` ```mermaid ```` fence (an unclosed one is still [`Block::Code`]).
+    /// A ```` ```mermaid ```` fence, closed or still arriving.
     Mermaid(String),
 }
 
@@ -208,7 +213,8 @@ impl Markdown {
         self
     }
     /// The source is still arriving: a table's last row, with no newline after it yet, is left
-    /// out of the column widths until it ends. Off, the text is whole.
+    /// out of the column widths until it ends, and a diagram brings in each node and edge as
+    /// its line arrives. Off, the text is whole.
     pub fn streaming(mut self, on: bool) -> Self {
         self.streaming = on;
         self

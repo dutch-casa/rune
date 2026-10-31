@@ -32,6 +32,7 @@ run gallery-combobox  3.0 $B/kit-gallery --scene rune-combobox--searchable --scr
 run gallery-combobox-animated 3.0 $B/kit-gallery --scene rune-combobox--animated-filter --script examples/kit-gallery/scripts/combobox-animated-filter.json
 run gallery-modal     5.5 $B/kit-gallery --scene motion-focus-modal --script examples/kit-gallery/scripts/motion-focus-modal.json
 run gallery-stagger-list 3.0 $B/kit-gallery --scene motion-stagger-list --script examples/kit-gallery/scripts/motion-stagger-list.json
+run gallery-mermaid-stream 4.5 $B/kit-gallery --scene rune-markdown--mermaid-streaming --size 1100x1400 --script $S/gallery-mermaid-stream.json
 run odometer          5.4 $B/odometer --script $S/odometer.json
 run shell-idle        2.0 $SH
 run shell-toggle      3.0 $SH --script $S/shell-toggle.json

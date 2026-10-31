@@ -7,6 +7,7 @@ use rune::Color;
 use super::canvas::{Canvas, Scene, measure_balanced};
 use super::layered::{MAX_MINLEN, Spacing};
 use super::layered_draw::{ClusterSpec, Dir, DrawNode, Edge, Head, Line, NodeShape, layered_canvas, node_size};
+use super::parts::Names;
 use super::{
     Cur, DiagramStyle, EdgeStyle, Hover, MAX_DEPTH, MAX_ITEMS, NodeStyle, StyleSheet, clean, clean_quoted,
     parse_edge_style_props, statements,
@@ -691,7 +692,15 @@ pub(crate) fn draw_canvas(f: &Flowchart, paint: &DiagramStyle, hover: Option<(Ho
         })
         .collect();
     let clusters: Vec<ClusterSpec> = f.subgraphs.iter().map(|s| ClusterSpec { title: s.title.clone(), parent: s.parent }).collect();
-    layered_canvas(f.dir, &nodes, &f.edges, &clusters, &SPACING, paint, hover)
+    let mut c = layered_canvas(f.dir, &nodes, &f.edges, &clusters, &SPACING, paint, hover)?;
+    c.names = names(f);
+    Some(c)
+}
+
+/// Nodes and subgraphs by id, edges by their ends.
+fn names(f: &Flowchart) -> Names {
+    let frames = f.subgraphs.iter().enumerate().map(|(i, s)| s.id.clone().unwrap_or_else(|| format!("#{i}"))).collect();
+    Names::new(f.nodes.iter().map(|n| n.id.clone()).collect(), &f.edges, frames)
 }
 
 #[cfg(test)]

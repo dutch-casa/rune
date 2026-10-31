@@ -6,7 +6,8 @@ use rune::Color;
 
 use super::canvas::{Measured, Scene, measure_balanced};
 use super::layered::Spacing;
-use super::layered_draw::{ClusterSpec, Dir, DrawNode, Edge, Head, Line, NodeShape, draw_layered, node_size};
+use super::layered_draw::{ClusterSpec, Dir, DrawNode, Edge, Head, Line, NodeShape, layered_canvas, node_size};
+use super::parts::Names;
 use super::{
     DiagramStyle, EdgeStyle, Hover, MAX_DEPTH, MAX_ITEMS, NodeStyle, StyleSheet, clean_quoted, statements,
 };
@@ -23,7 +24,6 @@ pub(crate) enum StateKind {
 
 #[derive(Debug)]
 pub(crate) struct StateNode {
-    #[cfg_attr(not(test), allow(dead_code, reason = "tests check parsing by id"))]
     pub id: String,
     pub label: String,
     pub desc: Vec<String>,
@@ -521,7 +521,9 @@ pub(crate) fn draw(d: &StateDiagram, paint: &DiagramStyle, hover: Option<(Hover,
         })
         .collect();
     let clusters: Vec<ClusterSpec> = d.composites.iter().map(|c| ClusterSpec { title: c.title.clone(), parent: c.parent }).collect();
-    draw_layered(d.dir, &nodes, &d.edges, &clusters, &SPACING, paint, hover)
+    let mut c = layered_canvas(d.dir, &nodes, &d.edges, &clusters, &SPACING, paint, hover)?;
+    c.names = Names::new(d.states.iter().map(|s| s.id.clone()).collect(), &d.edges, Vec::new());
+    c.finish_fit(paint)
 }
 
 #[cfg(test)]
