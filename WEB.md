@@ -219,8 +219,8 @@ receive input. Browser actions are checked against the current scene.
 Inline links follow source order while retaining their action identities. Ordinary web URLs
 remain native anchors. Modal focus returns to the previous control or link on dismissal.
 Focused virtual editors retain their native element across unmounts. Browsers without
-`Element.moveBefore` use focus and selection restoration; reparenting can still end native
-composition in those browsers.
+`Element.moveBefore` keep a composing field where it is until the composition ends, then
+apply the structural update.
 
 The shell's **Text view** button displays the same semantic DOM in normal text flow and hides
 the canvas. It keeps the native editor, draft, selection and application handlers. Browser

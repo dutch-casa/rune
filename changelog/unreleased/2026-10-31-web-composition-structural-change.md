@@ -1,0 +1,1 @@
+- On web, an open composition survives a structural update in browsers that cannot move a focused element.

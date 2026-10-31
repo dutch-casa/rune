@@ -131,6 +131,7 @@ impl<S: 'static> Running<S> {
             Some("key" | "key_up") => activate = self.rt.web_key(event),
             Some("a11y_focus") => activate = self.rt.web_a11y_action(event),
             Some("a11y_blur" | "a11y_press" | "a11y_link") => { let _ = self.rt.web_a11y_action(event); }
+            Some("a11y_release") => self.input.a11y.release_hold(),
             _ => {}
         }
         // Commit within the DOM event: clipboard, link and soft-keyboard APIs need activation.

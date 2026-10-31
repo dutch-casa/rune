@@ -362,6 +362,21 @@ mod tests {
         rt.web_key(&down); rt.frame(0.0);
         assert_eq!(rt.state, 2);
     }
+
+    #[test]
+    fn releasing_a_held_mirror_sends_the_tree_again() {
+        fn view(s: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
+            crate::text_input(s, crate::TextStyle::new(14.0, 400.0)).key("field").size(180.0, 32.0)
+                .on_edit(|s: &mut crate::TextEdit| s)
+        }
+        let mut rt = Runtime::new(crate::TextEdit::new("hi"), view, (200.0, 80.0), Env::default());
+        rt.frame(0.0);
+        let mut mirror = crate::runtime::web_a11y::A11yMirror::default();
+        assert!(rt.web_a11y(&mut mirror).is_some());
+        assert!(rt.web_a11y(&mut mirror).is_none(), "an unchanged tree is not sent again");
+        mirror.release_hold();
+        assert!(rt.web_a11y(&mut mirror).is_some(), "a held composition asks for the tree again");
+    }
 }
 
 /// A critically damped edge return, integrated exactly for variable frame times.

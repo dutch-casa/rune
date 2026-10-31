@@ -421,6 +421,13 @@ function revealActive(h, entry, activeDesc, activeId, focusPath) {
     activeDesc.element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
+function compositionHeld(h) {
+    const entry = h.editors.get(h.context?.key);
+    // moveBefore keeps a focused field's composition. Without it, reparenting ends the
+    // composition, so the tree waits until the composition commits.
+    return !!entry?.editor.composing && typeof h.a11y.moveBefore !== 'function';
+}
+
 function applyBounds(h) {
     if (h.disposed || textView.showing(h)) return;
     const canvasRect = h.canvas.getBoundingClientRect();
@@ -439,6 +446,14 @@ function applyBounds(h) {
 export function syncA11y(h, json) {
     if (h.disposed) return;
     const packet = JSON.parse(json);
+    if (packet.items && compositionHeld(h)) {
+        h.imeHeld = true;
+        h.modal = !!packet.modal;
+        h.focused = packet.focus ?? null;
+        for (const [path, rect] of packet.bounds ?? []) h.bounds.set(path, rect);
+        applyBounds(h);
+        return;
+    }
     const active = document.activeElement;
     const owned = active === h.canvas || h.a11y.contains(active);
     const selection = textView.selection(h);

@@ -73,8 +73,11 @@ export function createEditor(h, key, secure, combobox = false) {
             queueMicrotask(() => { if (!e.disposed && e.composing) changed(true); });
         });
         listen('compositionend', () => {
-            changed();
+            const held = h.imeHeld;
+            h.imeHeld = false;
             e.composing = false; e.composition = '';
+            changed();
+            if (held) send({ kind: 'a11y_release' });
             send({ kind: 'sync' });
         });
         listen('select', () => {

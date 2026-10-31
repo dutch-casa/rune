@@ -35,6 +35,12 @@ impl A11yMirror {
     pub(crate) fn delivered(&mut self) {
         if self.json.capacity() > 1024 * 1024 { self.json = Vec::new(); }
     }
+
+    /// The DOM kept an open composition and did not apply the last tree. The next delivery
+    /// sends the items again.
+    pub(crate) fn release_hold(&mut self) {
+        self.signature = None;
+    }
 }
 
 #[derive(Debug, PartialEq)]
