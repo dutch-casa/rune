@@ -21,7 +21,7 @@ pub struct PaneState {
     /// The width and the width it was made with (the default), as asked, before clamping, so a
     /// later `range` can widen to them.
     asked: [f32; 2],
-    /// Where the step menu was opened. Not a width, and not an author field.
+    /// Where the step menu was opened. Cleared when the menu closes.
     step_menu: Option<StepMenu>,
 }
 
@@ -39,7 +39,7 @@ pub(super) enum Peek {
     Docked,
 }
 
-/// Where the step menu opens. Cleared when it closes or the pane does. Not an author field.
+/// Where the step menu opens. Cleared when the menu closes, and when the pane closes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum StepMenu {
     /// A secondary click, at the pointer.
@@ -54,7 +54,9 @@ impl PaneState {
     pub const MAX: f32 = 480.0;
 
     /// An open pane `width` points wide, which double-clicking its edge also returns to.
+    /// A non-finite width starts at [`Self::MIN`].
     pub fn new(width: f32) -> PaneState {
+        let width = finite_or(width, Self::MIN);
         let mut p = PaneState { width, open: true, min: Self::MIN, max: Self::MAX, resizing: false, peek: Peek::None, asked: [width; 2], step_menu: None };
         p.clamp();
         p
@@ -62,9 +64,9 @@ impl PaneState {
     /// Its width range. The width and the default clamp into it, from the values given to
     /// [`Self::new`] and [`Self::with_width`], so `new(640.0).range(360.0, 960.0)` is 640.
     pub fn range(mut self, min: f32, max: f32) -> Self {
-        self.min = min.max(1.0);
-        self.max = max.max(self.min);
-        self.width = self.asked[0];
+        self.min = finite_or(min, 1.0).max(1.0);
+        self.max = finite_or(max, self.min).max(self.min);
+        self.width = finite_or(self.asked[0], self.min);
         self.clamp();
         self
     }
@@ -95,7 +97,7 @@ impl PaneState {
         self.max
     }
     pub fn default_width(&self) -> f32 {
-        self.asked[1].round().clamp(self.min, self.max)
+        finite_or(self.asked[1], self.min).round().clamp(self.min, self.max)
     }
     /// Whether its edge is being dragged.
     pub fn is_resizing(&self) -> bool {
@@ -179,8 +181,16 @@ impl PaneState {
     }
 
     fn clamp(&mut self) {
-        self.width = self.width.round().clamp(self.min, self.max);
+        if !self.min.is_finite() { self.min = Self::MIN; }
+        if !self.max.is_finite() { self.max = self.min.max(Self::MAX); }
+        if self.max < self.min { self.max = self.min; }
+        self.width = finite_or(self.width, self.min).round().clamp(self.min, self.max);
     }
+}
+
+/// A finite `value`, or `fallback` when it is NaN or infinite.
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() { value } else { fallback }
 }
 
 impl Default for PaneState {
@@ -463,5 +473,18 @@ mod tests {
         assert_eq!(PaneState::new(20.0).width(), PaneState::MIN);
         p.set_width(f32::NAN);
         assert_eq!(p.width(), 276.0);
+    }
+
+    #[test]
+    fn a_non_finite_width_stays_inside_the_range() {
+        assert_eq!(PaneState::new(f32::NAN).width(), PaneState::MIN);
+        assert_eq!(PaneState::new(f32::INFINITY).width(), PaneState::MIN);
+        let p = PaneState::new(f32::NAN).range(f32::NAN, f32::INFINITY);
+        assert!(p.min_width().is_finite() && p.max_width().is_finite() && p.width().is_finite());
+        assert!(p.min_width() <= p.width() && p.width() <= p.max_width());
+        assert!(p.default_width().is_finite());
+        let mut kept = PaneState::new(276.0);
+        kept.set_width(f32::NAN);
+        assert_eq!(kept.width(), 276.0);
     }
 }

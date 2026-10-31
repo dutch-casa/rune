@@ -1,0 +1,1 @@
+- **A non-finite pane width stays inside its range.** `PaneState::new`, `range`, `default_width` and `clamp` ignore `NaN` and infinity instead of panicking.
