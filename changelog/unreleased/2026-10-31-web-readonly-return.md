@@ -1,0 +1,1 @@
+- On web, Return in a read-only field activates the window's default button.

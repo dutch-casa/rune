@@ -122,8 +122,10 @@ export function createEditor(h, key, secure, combobox = false) {
         const chord = event.metaKey || event.ctrlKey;
         const navigation = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'];
         if (field.readOnly) {
+            // Arrows and clipboard shortcuts stay in the control. Enter and every other key
+            // it does not edit with reach the runtime, so the default button still fires.
             const native = navigation.includes(event.key) || (chord && ['a', 'c', 'x', 'v', 'insert'].includes(event.key.toLowerCase()));
-            if (event.key !== 'Escape' && (!chord || native)) return;
+            if (native) return;
         } else {
             const editing = event.key === 'Enter' || event.key === 'Escape' || navigation.includes(event.key)
                 || (secure && (event.key === 'Backspace' || event.key === 'Delete'));
