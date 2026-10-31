@@ -320,8 +320,8 @@ try {
         const handle = bridge.mount(canvas, event => events.push(JSON.parse(event)), true, false);
         const edit = { text: 'abc', base: 0, anchor: 0, focus: 0, secure: false, readonly: false, single: true, placeholder: '' };
         const packet = { items: [
-            { k: 'label', p: 'caption', r: [0, 0, 100, 20], t: 'Parked field' },
-            { k: 'textbox', p: 'field', r: [0, 20, 100, 30], t: '', name: 'Parked field', labelled_by: 'caption', tab: 0, edit },
+            { kind: 'label', path: 'caption', rect: [0, 0, 100, 20], text: 'Parked field' },
+            { kind: 'textbox', path: 'field', rect: [0, 20, 100, 30], text: '', name: 'Parked field', labelled_by: 'caption', tab: 0, edit },
         ], bounds: [], focus: { path: 'field', link: null }, modal: false };
         bridge.syncA11y(handle, JSON.stringify(packet));
         input.sync(handle, 'field', 'abc', 0, 0, 0, false);

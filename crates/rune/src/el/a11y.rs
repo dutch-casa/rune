@@ -1,12 +1,12 @@
 use crate::El;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct CheckState {
     pub checked: bool,
     pub indeterminate: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum LabelSource {
     Fallback,
     Composed,
@@ -28,10 +28,57 @@ pub struct ValueRange {
 /// The orientation of a separator or range control.
 ///
 /// Unset means the host default. A vertical splitter sets [`Orientation::Vertical`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Orientation {
     Horizontal,
     Vertical,
+}
+
+/// Which item is current in a set ([`El::current`]).
+///
+/// [`Current::True`] is the generic current item. The others name a step, a page, a place, a date
+/// or a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Current {
+    True,
+    Page,
+    Step,
+    Location,
+    Date,
+    Time,
+}
+
+impl Current {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Current::True => "true",
+            Current::Page => "page",
+            Current::Step => "step",
+            Current::Location => "location",
+            Current::Date => "date",
+            Current::Time => "time",
+        }
+    }
+}
+
+/// Roles the web mirror accepts. An unknown role is omitted from the DOM node; the element stays.
+/// Sorted for lookup.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const ROLES: &[&str] = &[
+    "alert", "alertdialog", "application", "article", "banner", "blockquote", "button", "caption", "cell",
+    "checkbox", "code", "columnheader", "combobox", "complementary", "contentinfo", "definition", "deletion",
+    "dialog", "directory", "document", "emphasis", "feed", "figure", "form", "grid", "gridcell", "group",
+    "heading", "img", "insertion", "link", "list", "listbox", "listitem", "log", "main", "marquee", "math",
+    "menu", "menubar", "menuitem", "menuitemcheckbox", "menuitemradio", "navigation", "none", "note", "option",
+    "paragraph", "presentation", "progressbar", "radio", "radiogroup", "region", "row", "rowgroup", "rowheader",
+    "scrollbar", "search", "searchbox", "separator", "slider", "spinbutton", "status", "strong", "subscript",
+    "suggestion", "superscript", "switch", "tab", "table", "tablist", "tabpanel", "term", "textbox", "time",
+    "timer", "toolbar", "tooltip", "tree", "treegrid", "treeitem",
+];
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn role_known(role: &str) -> bool {
+    ROLES.binary_search(&role).is_ok()
 }
 
 /// Accessibility state beyond role and label.
@@ -47,6 +94,12 @@ pub(crate) struct A11y {
     /// Stable key of the controlled node. Only set by [`El::controls`].
     pub controls: Option<String>,
     pub orientation: Option<Orientation>,
+    /// Toggle pressed state. `None` is not a toggle.
+    pub pressed: Option<bool>,
+    /// Current item in a set. `None` means not current.
+    pub current: Option<Current>,
+    /// The control selects more than one item (a multi-select grid, list or tree).
+    pub multiselectable: bool,
 }
 
 
@@ -139,11 +192,41 @@ impl El {
         self.a11y.orientation = Some(orientation);
         self
     }
+    /// A toggle button's pressed state. Unset means this is not a toggle.
+    pub fn pressed(mut self, pressed: bool) -> Self {
+        self.a11y.pressed = Some(pressed);
+        self
+    }
+    /// Mark this item current in a set: a step, a page, a place, a date, a time, or just current.
+    pub fn current(mut self, current: Current) -> Self {
+        self.a11y.current = Some(current);
+        self
+    }
+    /// This grid, list or tree selects more than one item.
+    pub fn multiselectable(mut self, on: bool) -> Self {
+        self.a11y.multiselectable = on;
+        self
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::el;
+
+    #[test]
+    fn roles_stay_sorted_and_match_the_web_mirror() {
+        assert!(super::ROLES.windows(2).all(|pair| pair[0] < pair[1]));
+        let src = include_str!("../platform/web/bridge.js");
+        let marker = "const roles = new Set(('";
+        let start = src.find(marker).expect("bridge lists roles");
+        let rest = &src[start + marker.len()..];
+        let end = rest.find("').split").expect("role list closes");
+        let js: std::collections::BTreeSet<&str> = rest[..end].split_whitespace().collect();
+        let rust: std::collections::BTreeSet<&str> = super::ROLES.iter().copied().collect();
+        assert_eq!(js, rust);
+        assert!(super::role_known("button") && super::role_known("treeitem"));
+        assert!(!super::role_known("nope") && !super::role_known("Button"));
+    }
 
     #[test]
     fn value_range_keeps_an_inclusive_finite_range_and_rejects_the_rest() {

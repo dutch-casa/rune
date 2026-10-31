@@ -1,0 +1,1 @@
+- `El::pressed` sets `aria-pressed`, including `false`. `El::current` sets `aria-current` to `true`, `page`, `step`, `location`, `date`, or `time`.

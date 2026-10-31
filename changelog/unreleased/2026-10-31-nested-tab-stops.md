@@ -1,0 +1,1 @@
+- A pressable that contains another pressable, a link, or a slider keeps each of them in the web accessibility tree, so every Rust tab stop has a DOM node.

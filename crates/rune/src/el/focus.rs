@@ -10,6 +10,8 @@ pub(crate) struct FocusSpec {
     pub order: i32,
     pub group: bool,
     pub selected: bool,
+    /// [`El::focus_selected`] was called, so this item is in a selection even when not selected.
+    pub in_selection: bool,
     /// Keyboard cursor, distinct from [`El::focus_selected`].
     pub cursor: bool,
     pub reveal_selected: bool,
@@ -39,6 +41,7 @@ impl crate::cold::Empty for FocusSpec {
         order: 0,
         group: false,
         selected: false,
+        in_selection: false,
         reveal_selected: false,
         cursor: false,
         preserve_on_press: crate::runtime::selectable::OnPress { focus: false, selection: false },

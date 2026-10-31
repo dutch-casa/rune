@@ -4,7 +4,6 @@ import * as textView from './text_view.js';
 
 const roles = new Set(('alert alertdialog application article banner blockquote button caption cell checkbox code columnheader combobox complementary contentinfo definition deletion dialog directory document emphasis feed figure form grid gridcell group heading img insertion link list listbox listitem log main marquee math menu menubar menuitem menuitemcheckbox menuitemradio navigation none note option paragraph presentation progressbar radio radiogroup region row rowgroup rowheader scrollbar search searchbox separator slider spinbutton status strong subscript suggestion superscript switch tab table tablist tabpanel term textbox time timer toolbar tooltip tree treegrid treeitem').split(' '));
 const unnamed = new Set(['none', 'presentation', 'paragraph', 'code', 'emphasis', 'strong', 'subscript', 'superscript', 'term', 'caption', 'deletion', 'insertion']);
-const selectedRoles = new Set(['option', 'tab', 'treeitem', 'row', 'gridcell']);
 const buttonRoles = new Set(['button', 'combobox']);
 let nextRoot = 0;
 const nodeChrome = 'position:absolute;box-sizing:border-box;margin:0;padding:0;border:0;background:transparent;color:transparent;pointer-events:none;resize:none;direction:ltr;writing-mode:horizontal-tb;';
@@ -24,6 +23,13 @@ function attribute(element, name, value) {
     if (value === null || value === undefined) {
         if (element.hasAttribute(name)) element.removeAttribute(name);
     } else if (element.getAttribute(name) !== String(value)) element.setAttribute(name, String(value));
+}
+
+// `{checked, indeterminate}` becomes the aria-checked token. Absent means not checkable.
+function ariaChecked(checked) {
+    if (!checked) return null;
+    if (checked.indeterminate) return 'mixed';
+    return checked.checked ? 'true' : 'false';
 }
 
 function webLink(url) {
@@ -133,7 +139,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
             return;
         }
         if (!entry || entry.editor || entry.data.disabled) return;
-        if (!entry.data.pressable && entry.data.tab == null && !buttonRoles.has(entry.data.k)) return;
+        if (!entry.data.pressable && entry.data.tab == null && !buttonRoles.has(entry.data.kind)) return;
         event.preventDefault();
         h.send({ kind: 'a11y_press', path: node.path });
     });
@@ -146,8 +152,8 @@ export function mount(canvas, callback, embedded, fitHeight) {
             return;
         } else {
             if (node?.element.dataset.runeUrl === 'true' && (event.key === 'Enter' || event.key === ' ')) return;
-            if (node?.link === null && h.a11yNodes.get(node?.path)?.data.k === 'button' && event.key === 'Enter') return;
-            if (textView.showing(h) && node?.link === null && buttonRoles.has(h.a11yNodes.get(node?.path)?.data.k) && event.key === ' ') return;
+            if (node?.link === null && h.a11yNodes.get(node?.path)?.data.kind === 'button' && event.key === 'Enter') return;
+            if (textView.showing(h) && node?.link === null && buttonRoles.has(h.a11yNodes.get(node?.path)?.data.kind) && event.key === ' ') return;
             if (h.editors.has(node?.path)) return;
         }
         event.preventDefault();
@@ -202,7 +208,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
     });
     h.restoreOverlay = entry => {
         entry.element.style.cssText = nodeChrome;
-        entry.element.style.font = `${entry.editor ? 16 : entry.data.s || 14}px/1.25 sans-serif`;
+        entry.element.style.font = `${entry.editor ? 16 : entry.data.font_size || 14}px/1.25 sans-serif`;
         entry.element.style.whiteSpace = 'pre-wrap';
         for (const link of entry.content?.querySelectorAll('[data-rune-link]') ?? []) link.style.cssText = linkChrome;
     };
@@ -221,7 +227,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
 }
 
 function comboboxEditor(item) {
-    return !!(item?.edit && item.k === 'combobox');
+    return !!(item?.edit && item.kind === 'combobox');
 }
 
 function comboboxInput(item) {
@@ -230,10 +236,10 @@ function comboboxInput(item) {
 
 function tagFor(item) {
     if (item.edit) return item.edit.secure || comboboxInput(item) ? 'input' : 'textarea';
-    if (buttonRoles.has(item.k)) return 'button';
-    if (item.k === 'label') return 'label';
-    if (item.k === 'heading') return `h${item.l || 2}`;
-    return item.k === 'text' ? 'p' : 'div';
+    if (buttonRoles.has(item.kind)) return 'button';
+    if (item.kind === 'label') return 'label';
+    if (item.kind === 'heading') return `h${item.level || 2}`;
+    return item.kind === 'text' ? 'p' : 'div';
 }
 
 function compatible(entry, item) {
@@ -243,11 +249,11 @@ function compatible(entry, item) {
 
 function create(h, item) {
     const tag = tagFor(item);
-    const editor = item.edit ? createEditor(h, item.p, item.edit.secure, comboboxInput(item)) : null;
+    const editor = item.edit ? createEditor(h, item.path, item.edit.secure, comboboxInput(item)) : null;
     const element = editor?.field ?? document.createElement(tag);
     if (tag === 'button') element.type = 'button';
     element.id = `${h.prefix}-${++h.nextId}`;
-    element.dataset.runeNode = item.p;
+    element.dataset.runeNode = item.path;
     element.style.cssText = textView.showing(h) ? '' : nodeChrome;
     const content = editor ? null : document.createElement('span');
     if (content) element.append(content);
@@ -277,21 +283,27 @@ function place(parent, element, before) {
 function update(h, entry, item) {
     const { element, editor, content } = entry;
     entry.data = item;
-    const role = roles.has(item.k) ? item.k : null;
-    const chromeRole = editor || item.k === 'button' || item.k === 'heading' || item.k === 'text';
+    const role = roles.has(item.kind) ? item.kind : null;
+    const chromeRole = editor || item.kind === 'button' || item.kind === 'heading' || item.kind === 'text';
     attribute(element, 'role', comboboxEditor(item) ? 'combobox' : chromeRole ? null : role);
     attribute(element, 'aria-label', editor ? item.name || item.edit.placeholder || (item.edit.secure ? 'Password input' : 'Text input')
         : role && !unnamed.has(role) ? item.name || null : null);
-    attribute(element, 'tabindex', item.tab ?? (editor || buttonRoles.has(item.k) ? -1 : null));
-    attribute(element, 'aria-expanded', item.x);
+    attribute(element, 'tabindex', item.tab ?? (editor || buttonRoles.has(item.kind) ? -1 : null));
+    attribute(element, 'aria-expanded', item.expanded);
     attribute(element, 'aria-autocomplete', comboboxEditor(item) ? 'list' : null);
     attribute(element, 'aria-orientation', item.orientation === 'horizontal' || item.orientation === 'vertical' ? item.orientation : null);
-    attribute(element, 'aria-checked', item.checked);
-    attribute(element, 'aria-selected', selectedRoles.has(item.k) ? !!item.selected : null);
+    attribute(element, 'aria-checked', ariaChecked(item.checked));
+    // Present only when the item is in a selection, including false. A header row omits it.
+    attribute(element, 'aria-selected', item.selected == null ? null : item.selected);
+    attribute(element, 'aria-pressed', item.pressed == null ? null : item.pressed);
+    attribute(element, 'aria-current', item.current || null);
+    attribute(element, 'aria-multiselectable', item.multiselectable ? true : null);
+    attribute(element, 'aria-setsize', item.set_size ?? null);
+    attribute(element, 'aria-posinset', item.pos_in_set ?? null);
     attribute(element, 'aria-modal', item.modal ? true : null);
     attribute(element, 'aria-disabled', item.disabled ? true : null);
     attribute(element, 'aria-invalid', item.invalid ? true : null);
-    attribute(element, 'aria-level', item.k === 'treeitem' ? item.l ?? null : null);
+    attribute(element, 'aria-level', item.kind === 'treeitem' ? item.level ?? null : null);
     attribute(element, 'aria-valuenow', item.range ? item.range.value : null);
     attribute(element, 'aria-valuemin', item.range ? item.range.min : null);
     attribute(element, 'aria-valuemax', item.range ? item.range.max : null);
@@ -310,7 +322,7 @@ function update(h, entry, item) {
         attribute(element, 'aria-describedby', null);
     }
     if (!textView.showing(h)) {
-        element.style.font = `${editor ? 16 : item.s || 14}px/1.25 sans-serif`;
+        element.style.font = `${editor ? 16 : item.font_size || 14}px/1.25 sans-serif`;
         element.style.whiteSpace = 'pre-wrap';
     }
     if (editor) {
@@ -318,7 +330,7 @@ function update(h, entry, item) {
         attribute(element, 'aria-multiline', !item.edit.single);
         attribute(element, 'placeholder', item.edit.placeholder || null);
         if (item.edit.text != null) editor.sync(item.edit.text, item.edit.base, item.edit.anchor, item.edit.focus);
-        else if (h.context?.key === item.p && h.context.secure === item.edit.secure) {
+        else if (h.context?.key === item.path && h.context.secure === item.edit.secure) {
             const context = h.context;
             editor.sync(context.text, context.base, context.anchor, context.focus);
         }
@@ -340,31 +352,31 @@ function writeContent(h, entry, parents) {
     if (!content) return;
     const mode = textView.showing(h);
     const fallback = parents && mode ? leafFallback(item, parents) : '';
-    const signature = JSON.stringify([mode, item.t, item.u, fallback]);
+    const signature = JSON.stringify([mode, item.text, item.runs, fallback]);
     if (entry.signature === signature) return;
     entry.signature = signature;
-    if (item.u?.length) {
+    if (item.runs?.length) {
         content.replaceChildren();
-        for (const run of item.u) {
-            if (run.h && run.p != null && run.i != null) {
+        for (const run of item.runs) {
+            if (run.href && run.path != null && run.index != null) {
                 const a = document.createElement('a');
-                a.textContent = run.t;
-                a.dataset.runePath = run.p;
-                a.dataset.runeLink = String(run.i);
-                const url = webLink(run.h);
+                a.textContent = run.text;
+                a.dataset.runePath = run.path;
+                a.dataset.runeLink = String(run.index);
+                const url = webLink(run.href);
                 a.dataset.runeUrl = String(url);
-                a.href = url ? run.h : '#';
+                a.href = url ? run.href : '#';
                 if (url) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
                 attribute(a, 'role', run.role || null);
                 attribute(a, 'aria-label', run.label || null);
                 attribute(a, 'tabindex', run.tab ?? -1);
                 a.style.cssText = mode ? '' : linkChrome;
                 content.append(a);
-            } else content.append(document.createTextNode(run.t));
+            } else content.append(document.createTextNode(run.text));
         }
     } else {
         // Safari can cache a clipped control's name after replacing its text node.
-        const text = item.t || fallback;
+        const text = item.text || fallback;
         const child = content.firstChild;
         if (child?.nodeType === 3 && content.childNodes.length === 1) child.data = text;
         else content.textContent = text;
@@ -372,7 +384,7 @@ function writeContent(h, entry, parents) {
 }
 
 function leafFallback(item, parents) {
-    if (item.t || item.u?.length || parents.has(item.p)) return '';
+    if (item.text || item.runs?.length || parents.has(item.path)) return '';
     const parts = [];
     if (item.name) parts.push(item.name);
     const range = item.range;
@@ -387,7 +399,7 @@ function presentEntries(h) {
     if (textView.showing(h)) {
         parents = new Set();
         for (const { data: item } of h.a11yNodes.values()) {
-            if (!item.t && !item.u?.length && !item.name && !item.edit) continue;
+            if (!item.text && !item.runs?.length && !item.name && !item.edit) continue;
             let parent = item.parent;
             while (parent && !parents.has(parent)) {
                 parents.add(parent);
@@ -415,8 +427,8 @@ function refreshEntries(h) {
 }
 
 function revealActive(h, entry, activeDesc, activeId, focusPath) {
-    if (!textView.showing(h) || textView.blockActivate(h) || entry.data.p !== focusPath) return;
-    if (entry.data.k !== 'grid' && entry.data.k !== 'treegrid' && entry.data.k !== 'tree' && entry.data.k !== 'combobox') return;
+    if (!textView.showing(h) || textView.blockActivate(h) || entry.data.path !== focusPath) return;
+    if (entry.data.kind !== 'grid' && entry.data.kind !== 'treegrid' && entry.data.kind !== 'tree' && entry.data.kind !== 'combobox') return;
     if (!activeId || !activeDesc || entry.element.getAttribute('aria-activedescendant') === activeId) return;
     activeDesc.element.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
@@ -433,9 +445,9 @@ function applyBounds(h) {
     const canvasRect = h.canvas.getBoundingClientRect();
     const rootRect = h.a11y.getBoundingClientRect();
     for (const [path, entry] of h.a11yNodes) {
-        const rect = h.bounds.get(path) ?? entry.data.r;
+        const rect = h.bounds.get(path) ?? entry.data.rect;
         if (!rect) continue;
-        const parentRect = h.bounds.get(entry.data.parent) ?? h.a11yNodes.get(entry.data.parent)?.data.r;
+        const parentRect = h.bounds.get(entry.data.parent) ?? h.a11yNodes.get(entry.data.parent)?.data.rect;
         const x = parentRect ? rect[0] - parentRect[0] : canvasRect.left - rootRect.left + rect[0];
         const y = parentRect ? rect[1] - parentRect[1] : canvasRect.top - rootRect.top + rect[1];
         const values = { insetInlineStart: `${x}px`, insetBlockStart: `${y}px`, inlineSize: `${rect[2]}px`, blockSize: `${rect[3]}px` };
@@ -472,39 +484,39 @@ export function syncA11y(h, json) {
                 h.canvas.setAttribute('tabindex', '-1');
                 h.mirrorActive = true;
             }
-            const next = new Map(packet.items.map(item => [item.p, item]));
+            const next = new Map(packet.items.map(item => [item.path, item]));
             const focused = h.editors.get(h.context?.key);
             if (!h.parked && focused && focused.editor.secure === h.context?.secure) {
-                let park = !compatible(focused, next.get(focused.data.p));
+                let park = !compatible(focused, next.get(focused.data.path));
                 for (let parent = focused.element.parentElement; !park && parent && parent !== h.a11y; parent = parent.parentElement) {
                     const ancestor = h.a11yNodes.get(parent.dataset.runeNode);
-                    park = !ancestor || !compatible(ancestor, next.get(ancestor.data.p));
+                    park = !ancestor || !compatible(ancestor, next.get(ancestor.data.path));
                 }
                 if (park) {
                     place(h.a11y, focused.element, null);
                     focused.element.tabIndex = -1;
-                    h.a11yNodes.delete(focused.data.p);
+                    h.a11yNodes.delete(focused.data.path);
                     h.parked = focused;
                 }
             }
             h.editors.clear();
             const previous = new Map();
             for (const item of packet.items) {
-                let entry = h.a11yNodes.get(item.p);
+                let entry = h.a11yNodes.get(item.path);
                 if (entry && !compatible(entry, item)) {
                     disposeEntry(entry);
-                    h.a11yNodes.delete(item.p);
+                    h.a11yNodes.delete(item.path);
                     entry = null;
                 }
-                if (!entry && h.parked && h.parked.editor.key === item.p && item.edit && !item.edit.readonly
+                if (!entry && h.parked && h.parked.editor.key === item.path && item.edit && !item.edit.readonly
                     && h.parked.editor.secure === item.edit.secure) {
                     entry = h.parked;
                     h.parked = null;
                 }
                 if (!entry) entry = create(h, item);
-                h.a11yNodes.set(item.p, entry);
+                h.a11yNodes.set(item.path, entry);
                 update(h, entry, item);
-                if (entry.editor) h.editors.set(item.p, entry);
+                if (entry.editor) h.editors.set(item.path, entry);
                 const parentEntry = h.a11yNodes.get(item.parent);
                 const parent = parentEntry?.element ?? h.a11y;
                 const after = previous.get(parent);
@@ -524,7 +536,7 @@ export function syncA11y(h, json) {
             const focusPath = packet.focus?.path ?? null;
             for (const entry of h.a11yNodes.values()) {
                 const label = h.a11yNodes.get(entry.data.labelled_by);
-                const id = label?.data.k === 'label' ? label.element.id : null;
+                const id = label?.data.kind === 'label' ? label.element.id : null;
                 attribute(entry.element, 'aria-labelledby', id);
                 if (id) attribute(entry.element, 'aria-label', null);
                 const activeDesc = h.a11yNodes.get(entry.data.activedescendant);

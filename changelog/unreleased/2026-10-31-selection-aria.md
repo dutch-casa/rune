@@ -1,0 +1,1 @@
+- `aria-selected` is set only for an item in a selection, including an unselected one, so a header row is not "not selected". `El::multiselectable` sets `aria-multiselectable`; a multi-select table does. A virtual row reports `aria-setsize` and `aria-posinset` for the full list, not the mounted window.

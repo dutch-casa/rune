@@ -1,0 +1,1 @@
+- The element tree's `name` is the accessible name: an explicit label, a caption that replaced a placeholder, or the text a collapsed control absorbed. `label` stays the authored string. A heading with no level is level 2 there and in the web mirror.

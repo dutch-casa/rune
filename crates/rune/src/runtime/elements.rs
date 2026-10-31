@@ -22,6 +22,10 @@ pub struct ElementInfo {
     pub key: Option<String>,
     pub role: &'static str,
     pub label: Option<String>,
+    /// Accessible name after promotion. An explicit label, a caption that replaced a placeholder,
+    /// or the text a collapsed control absorbed. `None` when this element is not its own object
+    /// in the semantic tree.
+    pub name: Option<String>,
     /// What a text element shows (none for a secure field). An element of role `"text"` drawn
     /// from several texts, such as rune-kit's `RollingText`, gives its label.
     pub text: Option<String>,
@@ -60,7 +64,8 @@ pub struct ElementInfo {
     pub help: Option<String>,
     /// The part of this [`El::selectable`] text that is selected, as copying would take it.
     pub selected: Option<String>,
-    /// Its outline depth ([`El::level`]).
+    /// Its outline depth ([`El::level`]). A heading with no authored level is 2, matching the
+    /// web mirror.
     pub level: Option<u32>,
     /// Whether it is open ([`El::expanded`]); `None` when it can't open.
     pub expanded: Option<bool>,
@@ -202,6 +207,7 @@ impl<S: 'static> Runtime<S> {
             })
         }
         let controls = self.control_paths();
+        let names = self.semantic_names();
         let store = self.scene.store();
         let animating = |id: NodeId| store.is_animating(id, prop::FRAME) || store.is_animating(id, prop::TRAVEL)
             || store.is_animating(id, prop::PRESENCE) || store.is_animating(id, prop::OFFSET) || store.is_animating(id, prop::SCALE) || store.is_animating(id, P_PRESS_SCALE)
@@ -275,6 +281,7 @@ impl<S: 'static> Runtime<S> {
                     key: n.key.clone(),
                     role: n.role,
                     label: n.label.clone(),
+                    name: names.get(i).and_then(|name| name.clone()),
                     text: match &n.text {
                         Some(t) => (!secure).then(|| t.source_text().to_owned()),
                         // A text built from several (a rolling label's glyphs) reads as its label.
@@ -305,7 +312,7 @@ impl<S: 'static> Runtime<S> {
                         let (a, b) = selectable::range_in(&sel_ranges, i)?;
                         t.copy_slice(a as u32, b as u32)
                     }),
-                    level: n.a11y.level,
+                    level: super::semantic::exposed_level(n.role, n.a11y.level),
                     expanded: n.a11y.expanded,
                     checked: n.a11y.checked.map(|s| s.checked),
                     mixed: n.a11y.checked.is_some_and(|s| s.indeterminate),
@@ -332,7 +339,7 @@ impl<S: 'static> Runtime<S> {
                 trace_namespace: None,
                 loop_phase: None,
                 focusable: false, focused: false, focus_visible: false, inert: true, exiting: false,
-                key: Some(path.clone()), path, role: "text", label: None, text: None,
+                key: Some(path.clone()), path, role: "text", label: None, name: None, text: None,
                 rect: [r.x, r.y, r.w, r.h], target: [t.x, t.y, t.w, t.h],
                 opacity: f.source_alpha, scale: 1.0, blur: 0.0, radius: 0.0, fill: Color::TRANSPARENT, text_color: None,
                 hover: 0.0, press: 0.0, moving: true, parent: None,

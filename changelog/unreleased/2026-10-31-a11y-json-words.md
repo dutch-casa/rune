@@ -1,0 +1,1 @@
+- `Runtime::a11y_json` names every field with a word (`kind`, `path`, `rect`, `text`, `name`, `labelled_by`, and the rest). `checked` is `{checked, indeterminate}`.

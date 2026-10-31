@@ -2,12 +2,14 @@
 //! buttons and native editors positioned over the canvas so assistive tech and browser
 //! Find-in-page see the scene.
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
-use crate::el::a11y::LabelSource;
 use std::hash::{Hash, Hasher};
 
 use serde_json::{Value, json};
 
 use super::*;
+use super::semantic::{clean_slice, round1};
+pub(super) use super::semantic::rect4;
+use crate::el::a11y::{CheckState, Current};
 
 mod action;
 mod controls;
@@ -59,8 +61,9 @@ pub(crate) struct A11yItem {
     pub parent: Option<String>,
     pub tab: Option<i32>,
     pub disabled: bool,
-    pub checked: Option<&'static str>,
-    pub selected: bool,
+    pub checked: Option<CheckState>,
+    /// `None` when this item is not in a selection. A header row stays unset.
+    pub selected: Option<bool>,
     /// Path of the mounted cursor descendant this owner points at.
     pub active_descendant: Option<String>,
     /// Resolved path of the node this item controls. Absent when unset, stale, or ambiguous.
@@ -72,6 +75,14 @@ pub(crate) struct A11yItem {
     pub modal: bool,
     pub invalid: bool,
     pub range: Option<crate::ValueRange>,
+    /// Full count of a virtual list, tree or table, not the mounted window.
+    pub set_size: Option<i32>,
+    /// 1-based place in that set.
+    pub pos_in_set: Option<i32>,
+    /// `None` when this is not a toggle.
+    pub pressed: Option<bool>,
+    pub current: Option<Current>,
+    pub multiselectable: bool,
     pub edit: Option<A11yEdit>,
 }
 
@@ -113,34 +124,36 @@ impl A11yItem {
 
     fn to_json(&self) -> Value {
         let mut obj = serde_json::Map::new();
-        obj.insert("k".into(), json!(self.kind));
-        obj.insert("p".into(), json!(self.path));
-        obj.insert("r".into(), json!(self.rect));
-        if self.font_size != 0.0 { obj.insert("s".into(), json!(self.font_size)); }
-        if let Some(l) = self.level { obj.insert("l".into(), json!(l)); }
-        if let Some(x) = self.expanded { obj.insert("x".into(), json!(x)); }
-        if !self.text.is_empty() { obj.insert("t".into(), json!(self.text)); }
+        obj.insert("kind".into(), json!(self.kind));
+        obj.insert("path".into(), json!(self.path));
+        obj.insert("rect".into(), json!(self.rect));
+        if self.font_size != 0.0 { obj.insert("font_size".into(), json!(self.font_size)); }
+        if let Some(l) = self.level { obj.insert("level".into(), json!(l)); }
+        if let Some(x) = self.expanded { obj.insert("expanded".into(), json!(x)); }
+        if !self.text.is_empty() { obj.insert("text".into(), json!(self.text)); }
         if !self.runs.is_empty() {
             let runs: Vec<Value> = self.runs.iter().map(|r| {
                 let mut ro = serde_json::Map::new();
-                ro.insert("t".into(), json!(r.text));
-                if let Some(h) = &r.href { ro.insert("h".into(), json!(h)); }
-                if let Some(p) = &r.path { ro.insert("p".into(), json!(p)); }
-                if let Some(i) = r.link { ro.insert("i".into(), json!(i)); }
+                ro.insert("text".into(), json!(r.text));
+                if let Some(h) = &r.href { ro.insert("href".into(), json!(h)); }
+                if let Some(p) = &r.path { ro.insert("path".into(), json!(p)); }
+                if let Some(i) = r.link { ro.insert("index".into(), json!(i)); }
                 if let Some(role) = r.role { ro.insert("role".into(), json!(role)); }
                 if let Some(label) = &r.label { ro.insert("label".into(), json!(label)); }
                 if let Some(tab) = r.tab { ro.insert("tab".into(), json!(tab)); }
                 Value::Object(ro)
             }).collect();
-            obj.insert("u".into(), Value::Array(runs));
+            obj.insert("runs".into(), Value::Array(runs));
         }
         if let Some(name) = &self.name { obj.insert("name".into(), json!(name)); }
         if let Some(path) = &self.labelled_by { obj.insert("labelled_by".into(), json!(path)); }
         if let Some(parent) = &self.parent { obj.insert("parent".into(), json!(parent)); }
         if let Some(tab) = self.tab { obj.insert("tab".into(), json!(tab)); }
         if self.disabled { obj.insert("disabled".into(), json!(true)); }
-        if let Some(checked) = self.checked { obj.insert("checked".into(), json!(checked)); }
-        if self.selected { obj.insert("selected".into(), json!(true)); }
+        if let Some(checked) = self.checked {
+            obj.insert("checked".into(), json!({"checked": checked.checked, "indeterminate": checked.indeterminate}));
+        }
+        if let Some(selected) = self.selected { obj.insert("selected".into(), json!(selected)); }
         if let Some(path) = &self.active_descendant { obj.insert("activedescendant".into(), json!(path)); }
         if let Some(path) = &self.controls { obj.insert("controls".into(), json!(path)); }
         if let Some(axis) = self.orientation {
@@ -154,6 +167,11 @@ impl A11yItem {
         if let Some(range) = self.range {
             obj.insert("range".into(), json!({"value": range.value, "min": range.min, "max": range.max}));
         }
+        if let Some(n) = self.set_size { obj.insert("set_size".into(), json!(n)); }
+        if let Some(n) = self.pos_in_set { obj.insert("pos_in_set".into(), json!(n)); }
+        if let Some(pressed) = self.pressed { obj.insert("pressed".into(), json!(pressed)); }
+        if let Some(current) = self.current { obj.insert("current".into(), json!(current.as_str())); }
+        if self.multiselectable { obj.insert("multiselectable".into(), json!(true)); }
         if let Some(help) = &self.help { obj.insert("help".into(), json!(help)); }
         if self.modal { obj.insert("modal".into(), json!(true)); }
         if let Some(edit) = &self.edit {
@@ -165,31 +183,6 @@ impl A11yItem {
         }
         Value::Object(obj)
     }
-}
-
-fn round1(v: f32) -> f32 { (v * 10.0).round() / 10.0 }
-
-fn rect4(b: [f32; 4]) -> [f32; 4] {
-    [round1(b[0]), round1(b[1]), round1((b[2] - b[0]).max(0.0)), round1((b[3] - b[1]).max(0.0))]
-}
-
-fn clean_slice(spec: &crate::el::TextSpec, a: usize, b: usize) -> String {
-    let Some(slice) = spec.content.get(a..b) else { return String::new() };
-    if spec.uncopied.is_empty() { return slice.to_owned(); }
-    let mut excluded: Vec<_> = spec.uncopied.iter().filter_map(|&(start, end)| {
-        let (start, end) = (start as usize, end as usize);
-        (start < end && start < b && end > a).then_some((start, end))
-    }).collect();
-    excluded.sort_unstable();
-    let mut next = 0;
-    let mut out = String::with_capacity(slice.len());
-    for (offset, ch) in slice.char_indices() {
-        let start = a + offset;
-        let end = start + ch.len_utf8();
-        while next < excluded.len() && excluded[next].1 <= start { next += 1; }
-        if next == excluded.len() || excluded[next].0 >= end { out.push(ch); }
-    }
-    out
 }
 
 fn text_runs(path: &str, spec: &crate::el::TextSpec, tab: Option<i32>, eligible: impl Fn(usize) -> bool) -> Vec<A11yRun> {
@@ -228,55 +221,6 @@ fn text_runs(path: &str, spec: &crate::el::TextSpec, tab: Option<i32>, eligible:
 
 impl<S: 'static> Runtime<S> {
 
-    fn subtree_end(&self, root: usize) -> usize {
-        let mut j = root + 1;
-        while j < self.nodes.len() {
-            if std::iter::successors(self.nodes[j].parent, |&p| self.nodes[p].parent).any(|p| p == root) {
-                j += 1;
-            } else {
-                break;
-            }
-        }
-        j
-    }
-
-    fn descendant_label(&self, root: usize, end: usize) -> String {
-        let mut parts = Vec::new();
-        for j in root..end {
-            if !self.in_scope(j) || self.subtree_exiting(j) || self.nodes[j].vis.opacity <= 0.01 { continue; }
-            if let Some(lbl) = self.nodes[j].label.as_deref().filter(|s| !s.trim().is_empty()) {
-                parts.push(lbl.trim().to_owned());
-                continue;
-            }
-            if let Some(spec) = self.nodes[j].text.as_deref().filter(|t| !t.redacted && self.nodes[j].input.is_none()) {
-                let s = clean_slice(spec, 0, spec.content.len());
-                if !s.trim().is_empty() { parts.push(s.trim().to_owned()); }
-            }
-        }
-        parts.join(" ")
-    }
-    /// Visible text of a flattened option, tab, or row.
-    ///
-    /// A caption label and an editor value stay with their owners. `repeated` means the explicit
-    /// name only repeats that text, so the control should not say it twice.
-    fn flattened_contents(&self, root: usize, end: usize, name: Option<&str>, shown: impl Fn(usize) -> bool) -> (String, bool) {
-        let name = name.map(str::trim).filter(|s| !s.is_empty());
-        let mut text = String::new();
-        let mut repeated = false;
-        for j in root..end {
-            if !shown(j) || self.nodes[j].input.is_some() || self.nodes[j].role == "label" { continue; }
-            let Some(spec) = self.nodes[j].text.as_deref().filter(|t| !t.redacted) else { continue; };
-            let piece = clean_slice(spec, 0, spec.content.len());
-            let piece = piece.trim();
-            if piece.is_empty() { continue; }
-            repeated |= name.is_some_and(|name| name == piece);
-            if !text.is_empty() { text.push(' '); }
-            text.push_str(piece);
-        }
-        repeated |= name.is_some_and(|name| name == text.as_str());
-        (text, repeated)
-    }
-
     /// `on_press` plus the admission `web_a11y_action` rechecks. Not focus.
     pub(super) fn press_capable(&self, i: usize) -> bool {
         let n = &self.nodes[i];
@@ -290,23 +234,44 @@ impl<S: 'static> Runtime<S> {
         rect[2] > 0.0 && rect[3] > 0.0
     }
 
-    fn a11y_item(&self, i: usize, kind: &'static str, parent: Option<String>, name: Option<String>, tab: Option<i32>) -> A11yItem {
-        let n = &self.nodes[i];
+    fn project_item(&self, node: &super::semantic::SemanticNode) -> A11yItem {
+        let i = node.origin;
         A11yItem {
-            kind, path: n.path.clone(), rect: rect4(self.drawn_box(i)), font_size: 0.0,
-            level: if kind == "treeitem" { n.a11y.level } else { None },
-            expanded: n.a11y.expanded, text: String::new(), runs: Vec::new(),
-            name, labelled_by: None, parent, tab,
-            disabled: n.disabled,
-            checked: n.a11y.checked.map(|s| if s.indeterminate { "mixed" } else if s.checked { "true" } else { "false" }),
-            selected: n.focus.selected, active_descendant: None,
-            controls: None, orientation: n.a11y.orientation, pressable: self.press_capable(i),
-            help: n.help.clone().filter(|_| !n.help_cut || n.elided.is_some()),
-            modal: self.active_modal() == Some(i), invalid: n.a11y.invalid, range: n.a11y.range, edit: None,
+            kind: node.kind, path: node.path.clone(), rect: rect4(self.drawn_box(i)), font_size: 0.0,
+            level: node.level, expanded: node.expanded, text: node.text.clone(), runs: Vec::new(),
+            name: node.name.clone(), labelled_by: node.labelled_by.clone(), parent: node.parent.clone(), tab: node.tab,
+            disabled: node.disabled, checked: node.checked, selected: node.selected,
+            active_descendant: node.active_descendant.clone(), controls: node.controls.clone(),
+            orientation: node.orientation, pressable: self.press_capable(i), help: node.help.clone(),
+            modal: node.modal, invalid: node.invalid, range: node.range,
+            set_size: node.set_size, pos_in_set: node.pos_in_set, pressed: node.pressed,
+            current: node.current, multiselectable: node.multiselectable, edit: None,
         }
     }
 
-    /// Collect semantic DOM items for the current laid-out scene.
+    /// The semantic tree as a JSON array, one object per exposed node, in tree order.
+    ///
+    /// The web mirror projects this same tree. Names, collapsed controls and relationships
+    /// (`labelled_by`, `activedescendant`, `controls`) are already resolved.
+    ///
+    /// Every field name is a word:
+    ///
+    /// * `kind`, `path`, `rect` (`[x, y, width, height]` in points), `parent`
+    /// * `name` when the accessible name is not the visible text; `text` and `runs` for that text.
+    ///   A run is `{text, href, path, index, role, label, tab}`.
+    /// * `level` on a heading or tree item. A heading with no authored level is 2, the same value
+    ///   [`ElementInfo::level`](crate::ElementInfo::level) reports.
+    /// * `expanded`, `disabled`, `invalid`, `selected`, `pressed`, `current`
+    /// * `checked` as `{checked, indeterminate}` when the control is checkable
+    /// * `labelled_by`, `activedescendant` and `controls` as paths of other objects in this array
+    /// * `set_size` and `pos_in_set` on a virtual row: the full count, and the 1-based place in it
+    /// * `multiselectable` on a grid, list or tree that selects more than one item
+    /// * `tab`, `orientation`, `help`, `modal`, `range` (`{value, min, max}`), `font_size`, `pressable`
+    /// * `edit` for a native editor. A focused field omits its text; the shell keeps the composition.
+    ///
+    /// `selected` and `pressed` are present only when that state was set, including `false`.
+    /// A header row is not reported as not selected. `current` is `true`, `page`, `step`,
+    /// `location`, `date` or `time`.
     pub fn a11y_json(&self) -> String {
         let values: Vec<Value> = self.web_a11y_items().iter().map(A11yItem::to_json).collect();
         serde_json::to_string(&values).unwrap_or_else(|_| "[]".into())
@@ -317,82 +282,12 @@ impl<S: 'static> Runtime<S> {
     }
 
     fn collect_a11y(&self, track: bool) -> (Vec<A11yItem>, Vec<A11ySource>) {
-        let mut out: Vec<A11yItem> = Vec::new();
-        let mut origins = Vec::new();
+        let mut out = Vec::new();
         let mut sources = Vec::new();
-        let mut last_flow_parent: Option<usize> = None;
-        let visible = |i: usize| self.in_scope(i) && !self.subtree_exiting(i) && !self.subtree_unmounted(i)
-            && std::iter::successors(Some(i), |&j| self.nodes[j].parent).all(|j| self.nodes[j].vis.opacity > 0.01);
-        let owners = self.subtree_owners(|i| self.nodes[i].input.is_some() && visible(i));
-        let caption_controls = self.subtree_owners(|i| {
+        for node in self.semantic_tree() {
+            let i = node.origin;
             let n = &self.nodes[i];
-            (n.input.is_some() || n.role == "combobox") && visible(i)
-        });
-        let captions = self.subtree_owners(|i| {
-            let n = &self.nodes[i];
-            n.role == "label" && visible(i) && {
-                let rect = rect4(self.drawn_box(i));
-                rect[2] > 0.0 && rect[3] > 0.0
-            } && n.text.as_deref().is_some_and(|t| {
-                !t.redacted && if t.uncopied.is_empty() { !t.content.trim().is_empty() }
-                    else { !clean_slice(t, 0, t.content.len()).trim().is_empty() }
-            })
-        });
-        let mut nearby_caption = vec![None; self.nodes.len()];
-        for (i, node) in self.nodes.iter().enumerate() {
-            nearby_caption[i] = captions[i].or_else(|| node.parent.and_then(|p| nearby_caption[p]));
-        }
-        let caption_for = |i: usize, name: Option<&str>| {
-            let caption = nearby_caption[i]?;
-            let spec = self.nodes[caption].text.as_deref()?;
-            let name = name?.trim();
-            let matches = if spec.uncopied.is_empty() { name == spec.content.trim() }
-                else { name == clean_slice(spec, 0, spec.content.len()).trim() };
-            matches.then(|| self.nodes[caption].path.clone())
-        };
-        let mut tabbable = vec![false; self.nodes.len()];
-        for i in self.tab_order() { tabbable[i] = true; }
-        let mut labels: Vec<_> = self.nodes.iter().map(|n| n.label.as_deref()
-            .filter(|s| !s.trim().is_empty()).map(|s| (s, n.a11y.label_source))).collect();
-        for (i, n) in self.nodes.iter().enumerate().rev() {
-            if n.input.is_none() && (matches!(n.role, "textbox" | "combobox") || n.a11y.label_source == LabelSource::Composed)
-                && let Some(label) = labels[i] && let Some(editor) = owners[i].or(caption_controls[i])
-                && labels[editor].is_none_or(|(_, source)| source < label.1)
-            {
-                labels[editor] = Some(label);
-            }
-        }
-        let (control_path, control_target) = self.control_facts();
-        let nlen = self.nodes.len();
-        let mut shell_of = vec![None; nlen];
-        let mut claimed = vec![false; nlen];
-        for i in 0..nlen {
-            if self.nodes[i].role != "combobox" { continue; }
-            let Some(editor) = owners[i] else { continue; };
-            if editor == i { continue; }
-            if claimed[editor] { shell_of[editor] = None; }
-            else { claimed[editor] = true; shell_of[editor] = Some(i); }
-        }
-        let shell_expanded: Vec<Option<bool>> = shell_of.iter().map(|shell| shell.and_then(|s| self.nodes[s].a11y.expanded)).collect();
-        let mut retained: Vec<Option<String>> = vec![None; nlen];
-        let mut i = 0;
-        while i < self.nodes.len() {
-            let n = &self.nodes[i];
-            let end = self.subtree_end(i);
-            if !visible(i) || (matches!(n.role, "none" | "presentation") && !control_target[i]) {
-                retained[i] = n.parent.and_then(|p| retained[p].clone());
-                i += 1;
-                last_flow_parent = None;
-                continue;
-            }
-            let parent = n.parent.and_then(|p| retained[p].clone());
-            if owners[i].is_some_and(|editor| shell_of[editor] == Some(i)) {
-                retained[i] = parent;
-                i += 1;
-                last_flow_parent = None;
-                continue;
-            }
-            let tab = self.can_focus(i).then_some(if tabbable[i] { n.focus.order } else { -1 });
+            let mut item = self.project_item(&node);
             if let Some(input) = n.input.as_ref() {
                 let secure = n.a11y.secure || input.edit.is_secure();
                 let readonly = input.access.is_none();
@@ -400,214 +295,29 @@ impl<S: 'static> Runtime<S> {
                 let (base, text, anchor, focus) = if secure || focused { (0, "", 0, 0) }
                     else if readonly { (0, input.edit.text.as_str(), 0, 0) }
                     else { context_window(&input.edit) };
-                let kind = if shell_of[i].is_some() || n.role == "combobox" { "combobox" } else { "textbox" };
-                let mut item = self.a11y_item(i, kind, parent, labels[i].map(|(s, _)| s.to_owned()), tab);
-                if item.expanded.is_none() { item.expanded = shell_expanded[i]; }
-                item.labelled_by = caption_for(i, item.name.as_deref());
                 item.edit = Some(A11yEdit { text: (!focused).then(|| text.to_owned()), base, anchor, focus,
                     secure, readonly, single: input.single_line, placeholder: input.placeholder.clone() });
-                A11yItem::record_source(&mut sources, track, &item, n.id);
-                out.push(item);
-                origins.push(i);
-                i = end;
-                last_flow_parent = None;
-                continue;
-            }
-            let b = self.drawn_box(i);
-            let rect = rect4(b);
-            let semantic_kind = if self.active_modal() == Some(i) && !matches!(n.role, "dialog" | "alertdialog") {
-                Some("dialog")
-            } else { match n.role {
-                "group" if labels[i].is_some() || tab.is_some() || n.focus.group => Some("group"),
-                "textbox" => Some("group"),
-                "text" | "heading" | "button" | "group" | "label" => None,
-                role => Some(role),
-            }};
-            let control_owns_name = owners[i].or(caption_controls[i]).is_some_and(|editor| labels[i].is_some()
-                && labels[i].map(|(name, _)| name) == labels[editor].map(|(name, _)| name))
-                && (n.role == "textbox" || n.a11y.label_source == LabelSource::Composed)
-                && tab.is_none() && !n.focus.group;
-            let mut semantic_kind = if semantic_kind == Some("group") && control_owns_name { None } else { semantic_kind };
-            if control_target[i] && semantic_kind.is_none_or(|k| matches!(k, "none" | "presentation")) {
-                semantic_kind = Some("group");
-            }
-            let button_like = (n.role == "button" || n.handlers.on_press.is_some()) && !n.window_drag;
-            // Only collapse a pressable container into one button when it doesn't wrap an entire
-            // multi-block section with independent buttons inside.
-            let nested_press = (i + 1..end).any(|j| self.nodes[j].handlers.on_press.is_some()
-                || self.nodes[j].role == "button" || self.nodes[j].input.is_some());
-            if let Some(kind) = semantic_kind {
-                let mut item = self.a11y_item(i, kind, parent.clone(), labels[i].map(|(s, _)| s.to_owned()), tab);
-                if matches!(kind, "group" | "combobox") {
-                    item.labelled_by = caption_for(i, item.name.as_deref());
-                }
-                if !matches!(kind, "checkbox" | "radio" | "switch")
-                    && let Some(spec) = n.text.as_deref().filter(|t| !t.redacted)
-                {
-                    item.text = clean_slice(spec, 0, spec.content.len());
-                }
-                if kind == "combobox" {
-                    item.text = self.descendant_label(i + 1, end);
-                } else if matches!(kind, "checkbox" | "radio" | "switch") {
-                    let mut name_in_content = false;
-                    for j in i..end {
-                        let node = &self.nodes[j];
-                        if !visible(j) || node.input.is_some() { continue; }
-                        let Some(spec) = node.text.as_deref().filter(|t| !t.redacted) else { continue };
-                        let text = clean_slice(spec, 0, spec.content.len());
-                        let text = text.trim();
-                        if text.is_empty() { continue; }
-                        name_in_content |= item.name.as_deref().is_some_and(|name| name.trim() == text);
-                        if !item.text.is_empty() { item.text.push(' '); }
-                        item.text.push_str(text);
-                    }
-                    if name_in_content { item.name = None; }
-                } else if matches!(kind, "tab" | "option" | "row" | "gridcell") {
-                    let flatten = button_like && !nested_press && kind != "row";
-                    if flatten {
-                        // The subtree is dropped, so visible text, including support, lives here.
-                        // A name that only repeats that text is cleared. A different explicit name stays.
-                        let (text, repeated) = self.flattened_contents(i, end, item.name.as_deref(), &visible);
-                        if !text.is_empty() { item.text = text; }
-                        if repeated { item.name = None; }
-                    } else if matches!(kind, "tab" | "option") {
-                        if item.name.as_deref().is_some_and(|name| {
-                            (i..end).any(|j| {
-                                let node = &self.nodes[j];
-                                visible(j) && node.input.is_none() && node.text.as_deref()
-                                    .filter(|t| !t.redacted)
-                                    .is_some_and(|t| clean_slice(t, 0, t.content.len()).trim() == name.trim())
-                            })
-                        }) {
-                            item.name = None;
-                        } else if item.name.is_none() {
-                            let label = self.descendant_label(i + 1, end);
-                            if !label.is_empty() { item.name = Some(label); }
-                        }
-                    }
-                } else if matches!(kind, "menuitem" | "menuitemcheckbox" | "menuitemradio") && item.name.is_none() {
-                    let label = self.descendant_label(i + 1, end);
-                    if !label.is_empty() { item.name = Some(label); }
-                }
-                retained[i] = Some(n.path.clone());
-                A11yItem::record_source(&mut sources, track, &item, n.id);
-                out.push(item);
-                origins.push(i);
-                last_flow_parent = None;
-                let keeps_editor = kind == "combobox" && owners[i].is_some_and(|editor| editor != i);
-                if !keeps_editor && (kind == "combobox" || ((button_like || matches!(kind, "checkbox" | "radio" | "switch")) && !nested_press && kind != "row")) {
-                    i = end;
-                    continue;
-                }
-                i += 1;
-                continue;
-            } else if button_like && !nested_press && rect[2] > 0.0 && rect[3] > 0.0 {
-                let label = n.label.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| self.descendant_label(i, end));
-                if !label.is_empty() {
-                    let mut item = self.a11y_item(i, "button", parent.clone(), None, tab);
-                    item.text = label;
-                    A11yItem::record_source(&mut sources, track, &item, n.id);
-                    out.push(item);
-                    origins.push(i);
-                    i = end;
-                    last_flow_parent = None;
-                    continue;
-                }
-            }
-            if let Some(spec) = n.text.as_deref().filter(|t| !t.redacted && rect[2] > 0.0 && rect[3] > 0.0) {
-                let runs = text_runs(&n.path, spec, tab, |k| self.accepts_input(i) && self.link_eligible(i, k));
-                if !runs.is_empty() {
-                    let is_heading = n.role == "heading";
-                    let is_label = n.role == "label";
-                    // Flowed word-by-word paragraphs (`pr_chips::flow`) put sibling words (or 1-word
-                    // wrapper rows) inside one flex-wrap line row: merge consecutive inline text runs
-                    // sharing that flow container so screen readers and Find-in-page see whole sentences.
-                    let flow_group = n.parent.and_then(|p| {
-                        if self.nodes[p].key.as_deref().is_none() && self.nodes[p].parent.is_some()
-                            && self.nodes[i].key.as_deref().is_some_and(|k| k.starts_with("flow-"))
-                        {
-                            self.nodes[p].parent
-                        } else if self.nodes[i].key.as_deref().is_some_and(|k| k.starts_with("flow-")) {
-                            Some(p)
-                        } else {
-                            None
-                        }
-                    });
-                    if !is_heading && !is_label && flow_group.is_some() && flow_group == last_flow_parent
-                        && let Some(prev) = out.last_mut().filter(|it| it.kind == "text")
-                    {
-                        if runs.iter().any(|run| run.href.is_some()) { prev.tab = prev.tab.map(|_| -1); }
-                        let px1 = prev.rect[0] + prev.rect[2];
-                        let py1 = prev.rect[1] + prev.rect[3];
-                        let nx0 = prev.rect[0].min(rect[0]);
-                        let ny0 = prev.rect[1].min(rect[1]);
-                        let nx1 = px1.max(rect[0] + rect[2]);
-                        let ny1 = py1.max(rect[1] + rect[3]);
-                        prev.rect = [nx0, ny0, round1(nx1 - nx0), round1(ny1 - ny0)];
-                        let needs_space = prev.runs.last().is_some_and(|r| !r.text.ends_with(char::is_whitespace))
-                            && runs.first().is_some_and(|r| !r.text.starts_with(char::is_whitespace) && !r.text.starts_with([')', ']', '.', ',', ';', ':']));
-                        if needs_space {
-                            if let Some(last) = prev.runs.last_mut().filter(|r| r.href.is_none()) {
-                                last.text.push(' ');
-                            } else {
-                                prev.runs.push(A11yRun::plain(" ".into()));
-                            }
-                        }
-                        if runs.len() == 1 && runs[0].href.is_none()
-                            && let Some(last) = prev.runs.last_mut().filter(|r| r.href.is_none())
-                        {
-                            last.text.push_str(&runs[0].text);
-                        } else {
-                            prev.runs.extend(runs);
-                        }
-                        if track && let Some(source) = sources.last_mut() {
-                            source.extra.push(n.id);
-                            source.rect = prev.rect;
-                        }
-                        i += 1;
-                        continue;
-                    }
-                    let (plain, rich_runs) = if runs.len() == 1 && runs[0].href.is_none() && flow_group.is_none() {
+            } else if matches!(node.kind, "text" | "heading" | "label") {
+                if let Some(spec) = n.text.as_deref().filter(|t| !t.redacted) {
+                    let tab = item.tab;
+                    let runs = text_runs(&n.path, spec, tab, |k| self.accepts_input(i) && self.link_eligible(i, k));
+                    item.font_size = round1(spec.style.size);
+                    let has_links = runs.iter().any(|run| run.href.is_some());
+                    let (plain, rich) = if runs.len() == 1 && runs[0].href.is_none() {
                         (runs.into_iter().next().unwrap().text, Vec::new())
                     } else {
                         (String::new(), runs)
                     };
-                    let has_links = rich_runs.iter().any(|run| run.href.is_some());
-                    let mut item = self.a11y_item(i, if is_heading { "heading" } else if is_label { "label" } else { "text" }, parent.clone(),
-                        labels[i].map(|(s, _)| s.to_owned()), if has_links { tab.map(|_| -1) } else { tab });
-                    item.font_size = round1(spec.style.size);
-                    item.level = is_heading.then(|| n.a11y.level.unwrap_or(2).clamp(1, 6));
-                    item.expanded = None;
                     item.text = plain;
-                    item.runs = rich_runs;
-                    A11yItem::record_source(&mut sources, track, &item, n.id);
-                    out.push(item);
-                    origins.push(i);
-                    last_flow_parent = if is_heading || is_label { None } else { flow_group };
-                }
-            } else if n.role == "heading" && let Some(lbl) = n.label.clone().filter(|s| !s.trim().is_empty()) {
-                let mut item = self.a11y_item(i, "heading", parent, None, tab);
-                item.font_size = 16.0;
-                item.level = Some(n.a11y.level.unwrap_or(2).clamp(1, 6));
-                item.expanded = None;
-                item.text = lbl;
-                A11yItem::record_source(&mut sources, track, &item, n.id);
-                out.push(item);
-                origins.push(i);
-                last_flow_parent = None;
-            }
-            if retained[i].is_none() { retained[i] = n.parent.and_then(|p| retained[p].clone()); }
-            i += 1;
-        }
-        for (item, &origin) in out.iter_mut().zip(&origins) {
-            item.controls = control_path.get(origin).and_then(|p| p.clone());
-            if item.controls.is_none() {
-                if let Some(shell) = shell_of.get(origin).copied().flatten() {
-                    item.controls = control_path.get(shell).and_then(|p| p.clone());
+                    item.runs = rich;
+                    if has_links { item.tab = item.tab.map(|_| -1); }
+                } else if node.kind == "heading" {
+                    item.font_size = 16.0;
                 }
             }
+            A11yItem::record_source(&mut sources, track, &item, n.id);
+            out.push(item);
         }
-        self.assign_active_descendants(&mut out, &origins);
         (out, sources)
     }
 
@@ -617,19 +327,91 @@ impl<S: 'static> Runtime<S> {
         let focus = focus_index.map(|i| (self.nodes[i].path.as_str(), self.focused_link_index(i)));
         let modal = self.active_modal().is_some();
         let mut hash = std::collections::hash_map::DefaultHasher::new();
-        self.commits.hash(&mut hash);
         focus.hash(&mut hash);
         modal.hash(&mut hash);
+        self.active_modal().map(|i| self.nodes[i].path.as_str()).hash(&mut hash);
         for (i, node) in self.nodes.iter().enumerate() {
             node.id.hash(&mut hash);
             node.parent.hash(&mut hash);
-            node.live_text_seen.hash(&mut hash);
+            node.role.hash(&mut hash);
+            node.key.hash(&mut hash);
+            node.label.hash(&mut hash);
+            node.a11y.label_source.hash(&mut hash);
+            node.a11y.level.hash(&mut hash);
+            node.a11y.expanded.hash(&mut hash);
+            node.disabled.hash(&mut hash);
+            node.a11y.invalid.hash(&mut hash);
+            node.a11y.secure.hash(&mut hash);
+            node.a11y.checked.hash(&mut hash);
+            node.a11y.controls.hash(&mut hash);
+            node.a11y.orientation.hash(&mut hash);
+            node.a11y.pressed.hash(&mut hash);
+            node.a11y.current.hash(&mut hash);
+            node.a11y.multiselectable.hash(&mut hash);
+            if let Some(range) = node.a11y.range {
+                range.value.to_bits().hash(&mut hash);
+                range.min.to_bits().hash(&mut hash);
+                range.max.to_bits().hash(&mut hash);
+            }
+            node.focus.enabled.hash(&mut hash);
+            node.focus.order.hash(&mut hash);
+            node.focus.group.hash(&mut hash);
+            node.focus.selected.hash(&mut hash);
+            node.focus.in_selection.hash(&mut hash);
+            node.focus.cursor.hash(&mut hash);
+            node.focus.step.is_some().hash(&mut hash);
+            node.handlers.on_press.is_some().hash(&mut hash);
+            node.window_drag.hash(&mut hash);
+            node.help.hash(&mut hash);
+            node.help_cut.hash(&mut hash);
+            node.elided.is_some().hash(&mut hash);
+            if let Some(spec) = node.text.as_deref() {
+                spec.redacted.hash(&mut hash);
+                let secret = spec.redacted || node.is_secure();
+                secret.hash(&mut hash);
+                if secret {
+                    spec.content.len().hash(&mut hash);
+                } else {
+                    spec.content.hash(&mut hash);
+                    spec.uncopied.hash(&mut hash);
+                }
+                for link in &spec.links {
+                    link.start.hash(&mut hash);
+                    link.end.hash(&mut hash);
+                    link.id.hash(&mut hash);
+                    link.role.hash(&mut hash);
+                    link.label.hash(&mut hash);
+                }
+            }
+            if let Some(input) = node.input.as_ref() {
+                input.placeholder.hash(&mut hash);
+                input.single_line.hash(&mut hash);
+                input.access.is_none().hash(&mut hash);
+                let secure = node.a11y.secure || input.edit.is_secure();
+                let focused_editor = self.focused.as_deref() == Some(node.path.as_str());
+                secure.hash(&mut hash);
+                focused_editor.hash(&mut hash);
+                if !secure && !focused_editor {
+                    input.edit.text.hash(&mut hash);
+                    input.edit.anchor.hash(&mut hash);
+                    input.edit.focus.hash(&mut hash);
+                } else {
+                    input.edit.text.len().hash(&mut hash);
+                }
+            }
             self.in_scope(i).hash(&mut hash);
             self.scene.contains(node.id).hash(&mut hash);
             self.is_exiting(node.id).hash(&mut hash);
             (node.vis.opacity > 0.01).hash(&mut hash);
+            (node.local.w > 0.0 && node.local.h > 0.0).hash(&mut hash);
             let rect = rect4(self.drawn_box(i));
             (rect[2] > 0.0 && rect[3] > 0.0).hash(&mut hash);
+        }
+        let mut lists: Vec<_> = self.virtuals.iter().collect();
+        lists.sort_unstable_by_key(|(path, _)| *path);
+        for (path, list) in lists {
+            path.hash(&mut hash);
+            list.keys.hash(&mut hash);
         }
         let signature = hash.finish();
         let changed = mirror.signature != Some(signature);
@@ -684,6 +466,7 @@ impl<S: 'static> Runtime<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::el::a11y::CheckState;
     use serde_json::json;
 
     #[test]
@@ -827,7 +610,7 @@ mod tests {
         assert!(item(&edit).edit.as_ref().unwrap().text.as_ref().unwrap().len() < 1600);
         assert_eq!(item(&secret).edit.as_ref().unwrap().text.as_deref(), Some(""));
         assert_eq!(item(&readonly).edit.as_ref().unwrap().text.as_deref(), Some("read only"));
-        assert_eq!(item(&check).checked, Some("mixed"));
+        assert_eq!(item(&check).checked, Some(CheckState { checked: true, indeterminate: true }));
         assert_eq!((item(&check).text.as_str(), item(&check).name.as_deref()), ("", Some("Remember")));
         assert!(item(&check).disabled);
         assert_eq!((item(&choice).name.as_deref(), item(&choice).text.as_str()), (Some("Colour"), "Blue"));
@@ -842,9 +625,12 @@ mod tests {
         assert_eq!(clipped.runs.iter().filter_map(|run| run.href.as_deref()).collect::<Vec<_>>(), ["visible"]);
         assert_eq!(clipped.help.as_deref(), Some("Full copy"));
         assert!(!rt.a11y_json().contains("private value"));
+        assert!(items.iter().any(|it| it.text == "first"));
+        assert!(items.iter().any(|it| it.text == "second"));
+        assert!(!items.iter().any(|it| it.text.contains("first") && it.text.contains("second")));
         let first = rt.nodes.iter().position(|n| n.key.as_deref() == Some("flow-first")).unwrap();
         let second = rt.nodes.iter().position(|n| n.key.as_deref() == Some("flow-second")).unwrap();
-        let flow_path = rt.nodes[first].path.clone();
+        let (first_path, second_path) = (rt.nodes[first].path.clone(), rt.nodes[second].path.clone());
         rt.drawn[first] = [10.0, 220.0, 30.0, 15.0];
         rt.drawn[second] = [35.0, 220.0, 30.0, 15.0];
         let mut mirror = A11yMirror::default();
@@ -852,8 +638,9 @@ mod tests {
         rt.drawn[second][0] = 50.0;
         let update: Value = serde_json::from_str(rt.web_a11y(&mut mirror).unwrap()).unwrap();
         assert!(update.get("items").is_none());
-        assert!(update["bounds"].as_array().unwrap().iter().any(|entry|
-            entry[0] == flow_path && entry[1] == json!([10.0, 220.0, 70.0, 15.0])));
+        let bounds = update["bounds"].as_array().unwrap();
+        assert!(bounds.iter().any(|entry| entry[0] == second_path && entry[1] == json!([50.0, 220.0, 30.0, 15.0])));
+        assert!(!bounds.iter().any(|entry| entry[0] == first_path));
         assert!(rt.web_a11y(&mut mirror).is_none());
         rt.set_focus(Some(edit.clone()), true);
         assert_eq!(rt.web_a11y_items().iter().find(|item| item.path == edit).unwrap().edit.as_ref().unwrap().text, None);
@@ -908,7 +695,7 @@ mod tests {
         assert!(rt.web_a11y_action(&focus));
         rt.nodes[parent].vis.opacity = 0.0;
         let update: Value = serde_json::from_str(rt.web_a11y(&mut mirror).unwrap()).unwrap();
-        assert!(!update["items"].as_array().unwrap().iter().any(|item| item["p"] == path));
+        assert!(!update["items"].as_array().unwrap().iter().any(|item| item["path"] == path));
         rt.nodes[parent].vis.opacity = 1.0;
         rt.scene.remove(rt.nodes[parent].id);
         assert!(rt.subtree_exiting(parent));
@@ -987,7 +774,8 @@ mod tests {
         assert!(item("meter").invalid);
         assert_eq!(item("meter").to_json()["range"], json!({"value": 40.0, "min": 0.0, "max": 100.0}));
         assert_eq!(item("meter").to_json()["invalid"], true);
-        assert_eq!((item("off").checked, item("off").disabled), (Some("false"), true));
+        assert_eq!((item("off").checked, item("off").disabled),
+            (Some(CheckState { checked: false, indeterminate: false }), true));
         let info = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("meter")).unwrap();
         assert_eq!((info.range, info.invalid, info.disabled), (item("meter").range, true, false));
         let off = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("off")).unwrap();
@@ -1044,7 +832,7 @@ mod tests {
         assert_eq!(at(&items, &inner).active_descendant.as_deref(), Some(inner_row.as_str()));
         assert_ne!(at(&items, &files).active_descendant.as_deref(), Some(inner_row.as_str()));
         assert_eq!(at(&items, &row).level, Some(8));
-        assert_eq!(at(&items, &row).to_json()["l"], 8);
+        assert_eq!(at(&items, &row).to_json()["level"], 8);
         assert!(owned(&items));
         let (search, outside, hit) = (path(&rt, "search"), path(&rt, "outside"), path(&rt, "hit"));
         rt.set_focus(Some(outside.clone()), true);
@@ -1144,5 +932,204 @@ mod tests {
         rt.frame(0.0);
         assert_eq!(rt.state.presses, 1);
         let _ = (a, c);
+    }
+
+    #[test]
+    fn a_pressable_that_contains_a_pressable_keeps_both_nodes() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().size(240.0, 80.0).child(
+                crate::el().key("today").role("button").label("Today").expanded(true).focusable(true)
+                    .size(220.0, 48.0)
+                    .on_press(|_: &mut ()| {})
+                    .child(crate::el().key("add").role("button").label("Add").focusable(true)
+                        .size(28.0, 28.0)
+                        .on_press(|_: &mut ()| {})),
+            )
+        }
+        let mut rt = Runtime::new((), view, (240.0, 80.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let today = items.iter().find(|it| it.path == path("today")).expect("outer pressable");
+        let add = items.iter().find(|it| it.path == path("add")).expect("inner pressable");
+        assert_eq!(today.kind, "button");
+        assert_eq!(today.expanded, Some(true));
+        assert!(today.name.as_deref() == Some("Today") || today.text == "Today");
+        assert!(add.name.as_deref() == Some("Add") || add.text == "Add");
+        assert_eq!(add.parent.as_deref(), Some(today.path.as_str()));
+        assert!(today.tab.is_some() && add.tab.is_some());
+    }
+
+    #[test]
+    fn a_checkbox_keeps_a_link_in_its_label() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().key("sheet").size(320.0, 160.0)
+                .modal(false, |_: &mut ()| {})
+                .child(crate::el().key("agree").role("checkbox").label("Agree").size(280.0, 40.0)
+                    .child(crate::rich("Read the terms", vec![]).key("copy")
+                        .link(crate::Link::new(9..14, "terms"))))
+        }
+        let mut rt = Runtime::new((), view, (360.0, 200.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let agree = items.iter().find(|it| it.path == path("agree")).expect("checkbox");
+        let copy = items.iter().find(|it| it.path == path("copy")).expect("label text");
+        assert_eq!(copy.parent.as_deref(), Some(agree.path.as_str()));
+        let link = copy.runs.iter().find(|run| run.href.as_deref() == Some("terms")).expect("terms link");
+        assert_eq!(link.text, "terms");
+        assert!(link.tab.is_some());
+        assert!(rt.web_a11y_action(&json!({"kind": "a11y_focus", "path": copy.path, "link": link.link})));
+    }
+
+    #[test]
+    fn a_slider_inside_a_pressable_keeps_its_node() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::el().key("volume").role("button").label("Volume").size(220.0, 48.0)
+                .on_press(|_: &mut ()| {})
+                .child(crate::el().key("level").role("slider").size(160.0, 20.0)
+                    .value_range(1.0, 0.0..=10.0)
+                    .on_step(|_: &mut (), _: i32, _| {}))
+        }
+        let mut rt = Runtime::new((), view, (240.0, 80.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let volume = items.iter().find(|it| it.path == path("volume")).expect("pressable");
+        let level = items.iter().find(|it| it.path == path("level")).expect("slider");
+        assert_eq!(level.kind, "slider");
+        assert_eq!(level.parent.as_deref(), Some(volume.path.as_str()));
+        assert!(level.tab.is_some());
+        assert!(level.range.is_some());
+    }
+
+    #[test]
+    fn a_grid_sets_selected_only_on_items_in_a_selection() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().key("grid").role("grid").multiselectable(true).size(240.0, 100.0)
+                .child(crate::el().key("header").role("row").label("Name").size(200.0, 20.0))
+                .child(crate::el().key("data").role("row").label("Ada").focus_selected(false).size(200.0, 20.0))
+                .child(crate::el().key("cell").role("gridcell").label("Ada").size(80.0, 20.0))
+                .child(crate::el().key("picked").role("gridcell").label("Ada").focus_selected(true).size(80.0, 20.0))
+        }
+        let mut rt = Runtime::new((), view, (260.0, 140.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let item = |key: &str| items.iter().find(|it| it.path == path(key)).unwrap_or_else(|| panic!("no {key}"));
+        assert!(item("header").selected.is_none());
+        assert!(item("header").to_json().get("selected").is_none());
+        assert_eq!(item("data").selected, Some(false));
+        assert_eq!(item("data").to_json()["selected"], false);
+        assert!(item("cell").selected.is_none());
+        assert!(item("cell").to_json().get("selected").is_none());
+        assert_eq!(item("picked").selected, Some(true));
+        assert_eq!(item("picked").to_json()["selected"], true);
+        assert!(item("grid").multiselectable);
+        assert_eq!(item("grid").to_json()["multiselectable"], true);
+    }
+
+    #[test]
+    fn a_virtual_row_reports_its_place_in_the_full_set() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().key("viewport").size(200.0, 200.0)
+                .scroll(crate::ScrollSpec { stick_bottom: false })
+                .child(crate::col().key("rows").w_full().growth(crate::GrowthSpec::default())
+                    .virtual_rows(1000, 20.0,
+                        |_: &(), i| std::borrow::Cow::Owned(format!("r{i}")),
+                        |_: &(), i| crate::el().w_full().h(20.0).role("row").focus_selected(i == 0)))
+        }
+        let mut rt = Runtime::new((), view, (200.0, 200.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let rows: Vec<_> = items.iter().filter(|it| it.kind == "row").collect();
+        assert!(!rows.is_empty());
+        assert!(rows.len() < 1000, "the mirror lists the mounted window, not every row");
+        assert!(rows.iter().all(|row| row.set_size == Some(1000) && row.pos_in_set.is_some_and(|n| n >= 1)));
+        let first = rows.iter().find(|row| row.pos_in_set == Some(1)).expect("the first row is mounted");
+        assert_eq!(first.to_json()["set_size"], 1000);
+        assert_eq!(first.to_json()["pos_in_set"], 1);
+    }
+
+    #[test]
+    fn a_heading_without_a_level_is_level_two() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().size(200.0, 80.0)
+                .child(crate::text("Title").key("plain").role("heading"))
+                .child(crate::text("Chapter").key("third").role("heading").level(3))
+                .child(crate::text("Deep").key("deep").role("heading").level(9))
+        }
+        let mut rt = Runtime::new((), view, (200.0, 120.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let item = |key: &str| items.iter().find(|it| it.path == path(key)).unwrap();
+        assert_eq!(item("plain").level, Some(2));
+        assert_eq!(item("plain").to_json()["level"], 2);
+        assert_eq!(item("third").level, Some(3));
+        assert_eq!(item("deep").level, Some(6));
+        let info = |key: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
+        assert_eq!((info("plain").level, info("third").level, info("deep").level), (Some(2), Some(3), Some(6)));
+    }
+
+    #[test]
+    fn a_commit_that_only_changes_colour_does_not_reserialize_semantics() {
+        fn view(_: &u32, _: &mut Cx<u32>) -> El {
+            crate::el().key("swatch").role("button").label("Swatch").focusable(true).size(40.0, 40.0)
+        }
+        let mut rt = Runtime::new(0u32, view, (80.0, 80.0), Env::default());
+        rt.frame(0.0);
+        let mut mirror = A11yMirror::default();
+        assert!(rt.web_a11y(&mut mirror).is_some());
+        let i = rt.nodes.iter().position(|n| n.key.as_deref() == Some("swatch")).unwrap();
+        rt.nodes[i].vis.fill = crate::Color::WHITE;
+        assert!(rt.web_a11y(&mut mirror).is_none());
+        rt.nodes[i].cold_mut().label = Some("Renamed".into());
+        let update: Value = serde_json::from_str(rt.web_a11y(&mut mirror).unwrap()).unwrap();
+        assert!(update["items"].as_array().unwrap().iter().any(|item| item["text"] == "Renamed" || item["name"] == "Renamed"));
+    }
+
+    #[test]
+    fn the_inspector_reports_the_computed_accessible_name() {
+        struct Form { edit: crate::TextEdit }
+        fn view(s: &Form, _: &mut Cx<Form>) -> El {
+            let style = crate::TextStyle::new(14.0, 400.0);
+            crate::col().size(240.0, 120.0)
+                .child(crate::col().key("shell").label_if_missing("Account").role("textbox")
+                    .child(crate::text_input(&s.edit, style).key("edit").size(180.0, 28.0)))
+                .child(crate::el().key("fold").role("button").label("Show details").size(160.0, 28.0)
+                    .on_press(|_: &mut Form| {})
+                    .child(crate::text("Details").font(style)))
+        }
+        let mut rt = Runtime::new(Form { edit: crate::TextEdit::new("ada") }, view, (240.0, 140.0), Env::default());
+        rt.frame(0.0);
+        let info = |key: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
+        assert_eq!(info("edit").name.as_deref(), Some("Account"));
+        assert_eq!(info("edit").label.as_deref(), None);
+        assert_eq!(info("fold").name.as_deref(), Some("Show details"));
+        assert!(info("shell").name.is_none(), "a combobox shell is not its own object");
+        let tree = crate::tooling::tree_json(&rt, 0.0);
+        let edit = tree["elements"].as_array().unwrap().iter().find(|e| e["key"] == "edit").unwrap();
+        assert_eq!(edit["name"], "Account");
+    }
+
+    #[test]
+    fn a_toggle_reports_pressed_and_a_current_item_reports_current() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            crate::col().size(200.0, 80.0)
+                .child(crate::el().key("bold").role("button").label("Bold").pressed(false).size(80.0, 28.0)
+                    .on_press(|_: &mut ()| {}))
+                .child(crate::el().key("here").role("link").label("Home").current(crate::Current::Page).size(80.0, 28.0))
+        }
+        let mut rt = Runtime::new((), view, (200.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let items = rt.web_a11y_items();
+        let path = |key: &str| rt.nodes.iter().find(|n| n.key.as_deref() == Some(key)).unwrap().path.clone();
+        let item = |key: &str| items.iter().find(|it| it.path == path(key)).unwrap();
+        assert_eq!(item("bold").pressed, Some(false));
+        assert_eq!(item("bold").to_json()["pressed"], false);
+        assert_eq!(item("here").current, Some(crate::Current::Page));
+        assert_eq!(item("here").to_json()["current"], "page");
+        assert!(item("bold").to_json().get("current").is_none());
     }
 }

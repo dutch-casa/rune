@@ -283,6 +283,9 @@ pub(crate) fn tree_json<S>(rt: &Runtime<S>, real_t: f64) -> Value {
             if let Some(l) = &e.label {
                 v["label"] = l.clone().into();
             }
+            if let Some(n) = &e.name {
+                v["name"] = n.clone().into();
+            }
             if let Some(t) = &e.text {
                 v["text"] = t.clone().into();
             }

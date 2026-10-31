@@ -129,6 +129,7 @@ pub(crate) type DragEndFn = Rc<dyn Fn(crate::states::States<'_>, crate::DragOutc
 pub(crate) type EditFn = Rc<dyn for<'a> Fn(crate::states::States<'a>) -> &'a mut TextEdit>;
 
 pub(crate) use crate::el::a11y::A11y;
+pub use crate::el::a11y::Current;
 pub use crate::el::a11y::Orientation;
 pub use crate::el::a11y::ValueRange;
 pub(crate) use crate::el::focus::FocusSpec;
@@ -966,8 +967,11 @@ impl El {
         self.focus.group = true;
         self
     }
+    /// Mark this item selected or not. Either call joins the selection, so a host can tell a
+    /// header row from an unselected data row.
     pub fn focus_selected(mut self, selected: bool) -> Self {
         self.focus.selected = selected;
+        self.focus.in_selection = true;
         self
     }
     /// On a virtualized stack, reveal its selected row when the selected key changes,

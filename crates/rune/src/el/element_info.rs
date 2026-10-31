@@ -18,6 +18,7 @@ impl Default for ElementInfo {
             key: None,
             role: "group",
             label: None,
+            name: None,
             text: None,
             rect: [0.0; 4],
             target: [0.0; 4],

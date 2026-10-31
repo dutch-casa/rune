@@ -625,6 +625,9 @@ impl<S: 'static> Table<S> {
         if let Some(n) = name {
             root = root.label(n);
         }
+        if state.multi {
+            root = root.multiselectable(true);
+        }
         root
             .on_key(move |s: &mut S, ev: &KeyEvent, tx: &mut Tx| {
                 if tx.focused() != Some(grid_key.as_str()) {
