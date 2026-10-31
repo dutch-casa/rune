@@ -229,6 +229,9 @@ mod on_key_tests;
 #[cfg(test)]
 #[path = "live_only_tests.rs"]
 mod live_only_tests;
+#[cfg(test)]
+#[path = "runtime/live_check_tests.rs"]
+mod live_check_tests;
 #[path = "runtime/selection/select_all.rs"]
 mod select_all;
 #[cfg(test)]
@@ -676,7 +679,7 @@ pub struct Runtime<S: 'static> {
     live_only_check: bool,
     /// The live-only event this frame's commit checks: its handler, and what the view had built.
     #[cfg(debug_assertions)]
-    live_check: Option<(String, u64)>,
+    live_check: Option<(String, live_check::ViewPrint)>,
     /// Live-only events checked (and so committed) so far.
     #[cfg(debug_assertions)]
     live_checks: u64,

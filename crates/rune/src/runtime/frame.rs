@@ -506,14 +506,25 @@ impl<S: 'static> Runtime<S> {
         }
         // Once a frame, however often a drag moved the selection, and in time for this commit.
         for action in self.selection_changes() {
-            if self.run_action(action, &mut tx) { ran = true; why |= CommitWhy::INPUT; }
+            #[cfg(debug_assertions)]
+            let checks = self.live_checks;
+            let r = self.run_action(action, &mut tx);
+            #[cfg(debug_assertions)]
+            { ran_other |= r && checks == self.live_checks; }
+            if r { ran = true; why |= CommitWhy::INPUT; }
         }
         let mut open_urls = std::mem::take(&mut tx.open_urls);
         self.latch_requests(&mut tx);
         // A handler asked for a menu: the hover it takes ends in this commit, not a frame later.
         if self.release_pointer_for_popup() {
             for queued in std::mem::take(&mut self.queue) {
-                if !matches!(queued.action, Action::HoverChange(..)) { self.queue.push_queued(queued); } else if self.run_action(queued.action, &mut tx) { ran = true; why |= CommitWhy::INPUT; }
+                if !matches!(queued.action, Action::HoverChange(..)) { self.queue.push_queued(queued); continue; }
+                #[cfg(debug_assertions)]
+                let checks = self.live_checks;
+                let r = self.run_action(queued.action, &mut tx);
+                #[cfg(debug_assertions)]
+                { ran_other |= r && checks == self.live_checks; }
+                if r { ran = true; why |= CommitWhy::INPUT; }
             }
             open_urls.extend(std::mem::take(&mut tx.open_urls));
             self.latch_requests(&mut tx);
