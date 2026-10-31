@@ -38,6 +38,26 @@ Why this split wins:
    macOS; Warp ships the same native-Metal-plus-`wgpu` split; Flutter Impeller's Vulkan backend
    (~21 kLOC) is 3.5 times its Metal backend (~5.9 kLOC).
 
+## Default on macOS
+
+Since 2026-10-31 the native backend is the default on macOS: `metal-backend` is one of Rune's
+default features, and an app that doesn't call `App::gpu_backend` draws with it, prewarm
+included. `App::gpu_backend(GpuBackend::Wgpu)` or `RUNE_GPU_BACKEND=wgpu` opts out, and an app
+built with `default-features = false` keeps wgpu unless it adds the feature. `GpuBackend`'s
+`Default` is still `Wgpu`; the backend keeps the app's choice as unset, `Wgpu` or `Metal`
+internally, so an explicit `Wgpu` always wins. wgpu's `custom` feature is turned on for macOS
+targets only, so Linux, Windows, web and iOS builds compile what they did before. iOS keeps wgpu.
+
+Where the native backend falls short of wgpu, a defaulted app either falls back or fails loudly:
+
+- A compositor whose `Compositor::features` asks for something the backend doesn't offer (it
+  offers `TIMESTAMP_QUERY`) gets a wgpu device for that window or headless run, said once.
+- Pipelines made with `layout: None` derive their layout from the shaders, as wgpu-core does.
+- Depth and stencil, multisampling, more than four colour targets, indirect draws and
+  dispatches, render bundles, occlusion and pipeline-statistics queries, timestamps written
+  inside or between passes, non-WGSL shaders, `clear_texture`, binding arrays and uncommon
+  texture or vertex formats panic with a message that names the opt-out.
+
 ## 1. Where GPU CPU goes: HUD overlays vs normal windows
 
 ### Code checks and corrections to earlier notes

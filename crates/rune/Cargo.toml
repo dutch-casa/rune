@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["dbus", "embedded-fonts", "ogg-audio", "svg"]
+default = ["dbus", "embedded-fonts", "metal-backend", "ogg-audio", "svg"]
 # On web, bundle Inter (Regular, Medium, SemiBold) and IBM Plex Mono as built-in fallback fonts.
 # Disable when AppSpec::fonts supplies the app's own fonts to omit the bytes from the wasm.
 # Native builds always bundle Inter.
@@ -37,11 +37,13 @@ svg = ["dep:resvg"]
 # `Tray::new` returns `TrayError::Unsupported` on Linux and a Wayland session's global shortcuts
 # return `ShortcutError::Unsupported`; X11 shortcuts keep working. No effect on other platforms.
 dbus = ["dep:zbus", "dep:tokio", "dep:futures-util"]
-# macOS and iOS: a native Metal backend (research/34), used when the app chooses
-# `GpuBackend::Metal` or `RUNE_GPU_BACKEND=metal` is set at launch; wgpu's Metal backend stays the
-# default. It plugs in through wgpu's `custom` backend, which this feature turns on. No effect on
-# other platforms.
-metal-backend = ["wgpu/custom", "dep:objc2-quartz-core", "dep:parking_lot", "dep:raw-window-metal"]
+# macOS and iOS: Rune's native Metal backend (research/34). Mac apps draw with it by default; an
+# app opts out with `App::gpu_backend(GpuBackend::Wgpu)`, or a launch with `RUNE_GPU_BACKEND=wgpu`,
+# and an app built with `default-features = false` draws with wgpu unless it adds this feature.
+# iOS apps keep wgpu unless they choose `GpuBackend::Metal`. It plugs in through wgpu's `custom`
+# backend, which Rune turns on for Apple targets alone. No effect on other platforms: its crates
+# are Apple-only dependencies.
+metal-backend = ["dep:objc2-quartz-core", "dep:parking_lot", "dep:raw-window-metal", "dep:wgpu-naga-bridge"]
 
 [dependencies]
 procwatch = { path = "../procwatch", optional = true }
@@ -103,6 +105,10 @@ objc2-metal = "0.3"
 objc2-quartz-core = { version = "0.3.2", optional = true, default-features = false, features = ["std", "bitflags", "CALayer", "CAMetalLayer", "objc2-core-foundation", "objc2-core-graphics", "objc2-metal"] }
 parking_lot = { version = "0.12", optional = true }
 raw-window-metal = { version = "1.1", optional = true }
+wgpu-naga-bridge = { version = "~30.0.1", optional = true }
+# wgpu's `custom` backend, which `metal-backend` plugs into, on Apple targets alone: off them,
+# wgpu's calls dispatch to one backend with no branch.
+wgpu = { version = "~30.0.1", default-features = false, features = ["custom"] }
 objc2-foundation-video = { package = "objc2-foundation", version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSObject", "NSRange", "NSString", "NSURL", "NSURLConnection", "NSURLRequest", "NSURLResponse"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

@@ -102,7 +102,7 @@ impl DeviceInterface for MetalDevice {
         DispatchRenderPipeline::custom(super::pipeline::create(&self.shared, desc))
     }
     fn create_mesh_pipeline(&self, _: &wgpu::MeshPipelineDescriptor<'_>) -> DispatchRenderPipeline {
-        unimplemented!("RUNE_GPU_BACKEND=metal: mesh shaders")
+        super::unsupported!("mesh shaders")
     }
     fn create_compute_pipeline(&self, desc: &wgpu::ComputePipelineDescriptor<'_>) -> DispatchComputePipeline {
         DispatchComputePipeline::custom(super::compute::create(&self.shared, desc))
@@ -119,12 +119,12 @@ impl DeviceInterface for MetalDevice {
         DispatchTexture::custom(texture)
     }
     fn create_external_texture(&self, _: &wgpu::ExternalTextureDescriptor<'_>, _: &[&wgpu::TextureView]) -> DispatchExternalTexture {
-        unimplemented!("RUNE_GPU_BACKEND=metal: external textures")
+        super::unsupported!("external textures")
     }
     fn create_blas(&self, _: &wgpu::CreateBlasDescriptor<'_>, _: wgpu::BlasGeometrySizeDescriptors) -> (Option<u64>, DispatchBlas) {
-        unimplemented!("RUNE_GPU_BACKEND=metal: ray tracing")
+        super::unsupported!("ray tracing")
     }
-    fn create_tlas(&self, _: &wgpu::CreateTlasDescriptor<'_>) -> DispatchTlas { unimplemented!("RUNE_GPU_BACKEND=metal: ray tracing") }
+    fn create_tlas(&self, _: &wgpu::CreateTlasDescriptor<'_>) -> DispatchTlas { super::unsupported!("ray tracing") }
     fn create_sampler(&self, desc: &wgpu::SamplerDescriptor<'_>) -> DispatchSampler {
         DispatchSampler::custom(MetalSampler::new(&self.shared.device, desc))
     }
@@ -135,7 +135,7 @@ impl DeviceInterface for MetalDevice {
         DispatchCommandEncoder::custom(MetalEncoder::new(self.shared.clone()))
     }
     fn create_render_bundle_encoder(&self, _: &wgpu::RenderBundleEncoderDescriptor<'_>) -> DispatchRenderBundleEncoder {
-        unimplemented!("RUNE_GPU_BACKEND=metal: render bundles")
+        super::unsupported!("render bundles")
     }
     fn set_device_lost_callback(&self, _: BoxDeviceLostCallback) {}
     fn on_uncaptured_error(&self, _: Arc<dyn wgpu::UncapturedErrorHandler>) {}

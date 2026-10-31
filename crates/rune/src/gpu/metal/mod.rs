@@ -1,4 +1,4 @@
-//! A native Metal backend behind `RUNE_GPU_BACKEND=metal` (research/34, phase 1), through wgpu's
+//! Rune's native Metal backend, macOS's default (research/34), through wgpu's
 //! `custom` backend, so compositors and the frame loop keep calling wgpu types.
 //!
 //! Shaders stay WGSL: naga translates each pipeline's entry points to MSL with the pipeline
@@ -21,13 +21,18 @@
 //! CAMetalLayer through `gpu::with_layer`. Video planes from CoreVideo wrap as textures
 //! (`texture_from_raw`) whose owner the bind groups and command buffers using them keep.
 //! Compute passes, and timestamps at pass boundaries (`TIMESTAMP_QUERY`), are as wgpu-hal's.
-//! New textures read as zero, as wgpu promises. Other queries, render bundles, indirect
-//! commands and depth are not implemented.
+//! New textures read as zero, as wgpu promises. A pipeline without a layout derives one from
+//! its shaders, as wgpu-core does (`derive`). Other queries, render bundles, indirect commands,
+//! depth and multisampling are not implemented: they panic naming the way back to wgpu
+//! (`unsupported!`).
 
 pub(crate) mod bench;
 mod compute;
 #[cfg(test)]
 mod compute_tests;
+mod derive;
+#[cfg(test)]
+mod derive_tests;
 mod device;
 mod encode;
 mod layout;
@@ -96,7 +101,12 @@ pub(crate) fn render_msl(wgsl: &str, entries: &[wgpu::BindGroupLayoutEntry], lan
     })
 }
 
-/// Whether `App::gpu_backend` or `RUNE_GPU_BACKEND=metal` asks for this backend.
+/// The wgpu features this backend can offer: a compositor that wants others draws with wgpu
+/// unless the app or `RUNE_GPU_BACKEND` asked for this backend (`backend::wgpu_for`).
+pub(crate) const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY;
+
+/// Whether this backend draws: the default, unless `App::gpu_backend` or `RUNE_GPU_BACKEND`
+/// picks wgpu.
 pub(crate) fn enabled() -> bool {
     crate::gpu::backend::current() == crate::GpuBackend::Metal
 }
@@ -131,6 +141,14 @@ macro_rules! send_sync {
 }
 pub(crate) use send_sync;
 
+/// Panics for a wgpu feature this backend doesn't implement, naming the way back to wgpu.
+macro_rules! unsupported {
+    ($($what:tt)*) => {
+        panic!("Rune's Metal backend doesn't support {}; draw with wgpu instead: App::gpu_backend(GpuBackend::Wgpu) or RUNE_GPU_BACKEND=wgpu", format_args!($($what)*))
+    };
+}
+pub(crate) use unsupported;
+
 #[derive(Debug)]
 struct MetalInstance;
 
@@ -140,7 +158,7 @@ impl InstanceInterface for MetalInstance {
         Ok(unsafe { surface::create(target) })
     }
     fn request_adapter(&self, options: &wgpu::RequestAdapterOptions<'_, '_>) -> Pin<Box<dyn RequestAdapterFuture>> {
-        let device = preferred(devices(), options.power_preference).expect("RUNE_GPU_BACKEND=metal needs a Metal device");
+        let device = preferred(devices(), options.power_preference).expect("Rune's Metal backend needs a Metal device");
         Box::pin(ready(Ok(DispatchAdapter::custom(MetalAdapter { device }))))
     }
     fn poll_all_devices(&self, _: bool) -> bool { true }
@@ -191,7 +209,7 @@ impl AdapterInterface for MetalAdapter {
     }
     fn is_surface_supported(&self, _: &DispatchSurface) -> bool { true }
     fn features(&self) -> wgpu::Features {
-        if query::supported(&self.device) { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() }
+        if query::supported(&self.device) { FEATURES } else { wgpu::Features::empty() }
     }
     fn limits(&self) -> wgpu::Limits { limits() }
     fn downlevel_capabilities(&self) -> wgpu::DownlevelCapabilities { Default::default() }

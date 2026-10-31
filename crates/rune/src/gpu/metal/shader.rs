@@ -86,16 +86,20 @@ impl Ir {
             .unwrap_or_else(|e| panic!("{label}: {}", e.emit_to_string(source)));
         Ir { module: Arc::new(module), info: Arc::new(info), checks }
     }
+
+    pub(super) fn parts(&self) -> (&naga::Module, &naga::valid::ModuleInfo) {
+        (&self.module, &self.info)
+    }
 }
 
 impl ShaderModule {
     pub(crate) fn new(desc: wgpu::ShaderModuleDescriptor<'_>, checks: wgpu::ShaderRuntimeChecks) -> Self {
-        let wgpu::ShaderSource::Wgsl(source) = desc.source else { unimplemented!("RUNE_GPU_BACKEND=metal: shaders other than WGSL") };
+        let wgpu::ShaderSource::Wgsl(source) = desc.source else { super::unsupported!("shaders other than WGSL") };
         ShaderModule::Naga(Ir::parse(desc.label.unwrap_or("shader"), &source, checks))
     }
 
     pub(crate) fn passthrough(shared: &Shared, desc: &wgpu::ShaderModuleDescriptorPassthrough<'_>) -> Self {
-        let bytes = desc.metallib.as_deref().expect("RUNE_GPU_BACKEND=metal: passthrough shaders other than a metallib");
+        let bytes = desc.metallib.as_deref().unwrap_or_else(|| super::unsupported!("passthrough shaders other than a metallib"));
         let entries = desc.entry_points.iter().map(|e| (e.name.to_string(), [e.workgroup_size.0, e.workgroup_size.1, e.workgroup_size.2])).collect();
         let library = NonNull::new(bytes.as_ptr().cast_mut()).ok_or_else(|| "an empty metallib".to_string()).and_then(|buffer| {
             // SAFETY: dispatch copies `bytes` (the default destructor), and the data object is
