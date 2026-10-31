@@ -139,6 +139,9 @@ impl MenuItem {
         }
         e = e.child(content);
         if let Some(s) = self.shortcut {
+            if !s.is_empty() {
+                e = e.key_shortcuts(s.clone());
+            }
             let st = TextStyle { line_height: 11.0, ..k.ty.small_medium };
             e = e.child(text(s).key("shortcut").font(st).color(c.text_faint));
         }

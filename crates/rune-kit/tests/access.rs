@@ -79,6 +79,20 @@ fn a_checked_menu_item_is_a_checkbox_and_a_submenu_reports_open() {
 }
 
 #[test]
+fn a_menu_item_exposes_its_shortcut() {
+    fn view(_: &(), _: &mut Cx<()>) -> El {
+        let k = Kit::neutral(true);
+        let mut layer = Vec::new();
+        let trigger = Menu::new("file").open(true).item(MenuItem::new("Copy").shortcut("⌘C")).build(&k, &mut layer);
+        root(trigger, layer)
+    }
+    let mut rt = Runtime::new((), view, (400.0, 300.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let item = rt.elements().into_iter().find(|e| e.label.as_deref() == Some("Copy")).unwrap();
+    assert_eq!(item.key_shortcuts.as_deref(), Some("⌘C"));
+}
+
+#[test]
 fn a_toast_announces_its_description_and_its_close_is_a_key() {
     struct S { open: bool }
     fn view(s: &S, _: &mut Cx<S>) -> El {

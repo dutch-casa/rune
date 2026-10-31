@@ -1,0 +1,1 @@
+- **A menu item exposes its shortcut** as `aria-keyshortcuts`, alongside the visible key caption.
