@@ -54,10 +54,10 @@ pub(crate) struct A11yItem {
     pub checked: Option<&'static str>,
     pub selected: bool,
     /// Path of the mounted cursor descendant this owner points at.
-    pub activedescendant: Option<String>,
+    pub active_descendant: Option<String>,
     /// Resolved path of the node this item controls. Absent when unset, stale, or ambiguous.
     pub controls: Option<String>,
-    pub orientation: Option<crate::Axis>,
+    pub orientation: Option<crate::Orientation>,
     /// This node owns `on_press` and passes the current admission. Not a tab stop.
     pub pressable: bool,
     pub help: Option<String>,
@@ -133,12 +133,12 @@ impl A11yItem {
         if self.disabled { obj.insert("disabled".into(), json!(true)); }
         if let Some(checked) = self.checked { obj.insert("checked".into(), json!(checked)); }
         if self.selected { obj.insert("selected".into(), json!(true)); }
-        if let Some(path) = &self.activedescendant { obj.insert("activedescendant".into(), json!(path)); }
+        if let Some(path) = &self.active_descendant { obj.insert("activedescendant".into(), json!(path)); }
         if let Some(path) = &self.controls { obj.insert("controls".into(), json!(path)); }
         if let Some(axis) = self.orientation {
             obj.insert("orientation".into(), json!(match axis {
-                crate::Axis::Horizontal => "horizontal",
-                crate::Axis::Vertical => "vertical",
+                crate::Orientation::Horizontal => "horizontal",
+                crate::Orientation::Vertical => "vertical",
             }));
         }
         if self.pressable { obj.insert("pressable".into(), json!(true)); }
@@ -272,7 +272,7 @@ impl<S: 'static> Runtime<S> {
     /// `on_press` plus the admission `web_a11y_action` rechecks. Not focus.
     pub(super) fn press_capable(&self, i: usize) -> bool {
         let n = &self.nodes[i];
-        if n.handlers.on_press.is_none() || !self.allowed(i) || self.subtree_exiting(i) || self.subtree_unmounted(i) {
+        if n.handlers.on_press.is_none() || !self.accepts_input(i) || self.subtree_exiting(i) || self.subtree_unmounted(i) {
             return false;
         }
         if std::iter::successors(Some(i), |&j| self.nodes[j].parent).any(|j| self.nodes[j].vis.opacity <= 0.01) {
@@ -291,7 +291,7 @@ impl<S: 'static> Runtime<S> {
             name, labelled_by: None, parent, tab,
             disabled: n.a11y.disabled,
             checked: n.a11y.checked.map(|s| if s.indeterminate { "mixed" } else if s.checked { "true" } else { "false" }),
-            selected: n.focus.selected, activedescendant: None,
+            selected: n.focus.selected, active_descendant: None,
             controls: None, orientation: n.a11y.orientation, pressable: self.press_capable(i),
             help: n.help.clone().filter(|_| !n.help_cut || n.elided.is_some()),
             modal: self.active_modal() == Some(i), invalid: n.a11y.invalid, range: n.a11y.range, edit: None,
@@ -507,7 +507,7 @@ impl<S: 'static> Runtime<S> {
                 }
             }
             if let Some(spec) = n.text.as_deref().filter(|t| !t.redacted && rect[2] > 0.0 && rect[3] > 0.0) {
-                let runs = text_runs(&n.path, spec, tab, |k| self.allowed(i) && self.link_eligible(i, k));
+                let runs = text_runs(&n.path, spec, tab, |k| self.accepts_input(i) && self.link_eligible(i, k));
                 if !runs.is_empty() {
                     let is_heading = n.role == "heading";
                     let is_label = n.role == "label";
@@ -759,7 +759,7 @@ mod tests {
             crate::col().size(400.0, 800.0)
                 .child(crate::col().key("shell").label_if_missing("Account").role("textbox")
                     .child(crate::text_input(&s.edit, style).key("edit").size(200.0, 30.0)
-                        .fallback_label("Fallback").on_edit(|s: &mut Form| &mut s.edit)))
+                        .placeholder_label("Fallback").on_edit(|s: &mut Form| &mut s.edit)))
                 .child(crate::text_input(&s.secret, style).key("secret").size(200.0, 30.0)
                     .secure().on_edit(|s: &mut Form| &mut s.secret))
                 .child(crate::text_input(&s.readonly, style).key("readonly").size(200.0, 30.0))
@@ -1028,24 +1028,24 @@ mod tests {
         fn at<'a>(items: &'a [A11yItem], p: &str) -> &'a A11yItem {
             items.iter().find(|it| it.path == p).unwrap_or_else(|| panic!("no {p}"))
         }
-        let owned = |items: &[A11yItem]| items.iter().all(|it| it.activedescendant.as_ref().is_none_or(|p| items.iter().any(|other| other.path == *p)));
+        let owned = |items: &[A11yItem]| items.iter().all(|it| it.active_descendant.as_ref().is_none_or(|p| items.iter().any(|other| other.path == *p)));
         let items = rt.web_a11y_items();
         let (files, row, inner, inner_row, folder) = (path(&rt, "files"), path(&rt, "nested-row"), path(&rt, "inner"), path(&rt, "inner-row"), path(&rt, "folder"));
-        assert_eq!(at(&items, &files).activedescendant.as_deref(), Some(row.as_str()));
-        assert!(at(&items, &folder).activedescendant.is_none());
-        assert_eq!(at(&items, &inner).activedescendant.as_deref(), Some(inner_row.as_str()));
-        assert_ne!(at(&items, &files).activedescendant.as_deref(), Some(inner_row.as_str()));
+        assert_eq!(at(&items, &files).active_descendant.as_deref(), Some(row.as_str()));
+        assert!(at(&items, &folder).active_descendant.is_none());
+        assert_eq!(at(&items, &inner).active_descendant.as_deref(), Some(inner_row.as_str()));
+        assert_ne!(at(&items, &files).active_descendant.as_deref(), Some(inner_row.as_str()));
         assert_eq!(at(&items, &row).level, Some(8));
         assert_eq!(at(&items, &row).to_json()["l"], 8);
         assert!(owned(&items));
         let (search, outside, hit) = (path(&rt, "search"), path(&rt, "outside"), path(&rt, "hit"));
         rt.set_focus(Some(outside.clone()), true);
         let outside_items = rt.web_a11y_items();
-        assert!(at(&outside_items, &outside).activedescendant.is_none());
+        assert!(at(&outside_items, &outside).active_descendant.is_none());
         rt.set_focus(Some(search.clone()), true);
         let focused = rt.web_a11y_items();
-        assert!(at(&focused, &search).activedescendant.is_none(), "an editor does not guess a sibling option");
-        assert!(at(&focused, &path(&rt, "opts")).activedescendant.is_none());
+        assert!(at(&focused, &search).active_descendant.is_none(), "an editor does not guess a sibling option");
+        assert!(at(&focused, &path(&rt, "opts")).active_descendant.is_none());
         assert_eq!((at(&focused, &hit).name.as_deref(), at(&focused, &hit).text.as_str()), (None, "Blue Primary"));
         assert!(owned(&focused));
         rt.update(|s, _| { s.show_row = false; s.show_option = false; });
@@ -1053,8 +1053,8 @@ mod tests {
         let search = path(&rt, "search");
         rt.set_focus(Some(search.clone()), true);
         let gone = rt.web_a11y_items();
-        assert!(at(&gone, &search).activedescendant.is_none());
-        assert!(at(&gone, &path(&rt, "files")).activedescendant.is_none());
+        assert!(at(&gone, &search).active_descendant.is_none());
+        assert!(at(&gone, &path(&rt, "files")).active_descendant.is_none());
         assert!(owned(&gone));
     }
 
@@ -1081,7 +1081,7 @@ mod tests {
                 .child(crate::text_input(&s.edit, style).key("other").size(160.0, 24.0))
                 .child(crate::el().key("pane").size(80.0, 40.0))
                 .child(crate::el().key("grip").role("separator").size(6.0, 40.0).focusable(true)
-                    .controls("pane").orientation(crate::Axis::Vertical).value_range(20.0, 10.0..=40.0))
+                    .controls("pane").orientation(crate::Orientation::Vertical).value_range(20.0, 10.0..=40.0))
                 .child(crate::el().key("stale").role("separator").size(6.0, 16.0).controls("missing"))
                 .child(crate::col().key("left").child(crate::el().key("dup").size(10.0, 10.0)))
                 .child(crate::col().key("right").child(crate::el().key("dup").size(10.0, 10.0)))
@@ -1098,7 +1098,7 @@ mod tests {
             items.iter().find(|it| it.path == p).unwrap_or_else(|| panic!("no {p}"))
         }
         let (grid, c, a) = (path(&rt, "grid"), path(&rt, "c"), path(&rt, "a"));
-        assert_eq!(at(&items, &grid).activedescendant.as_deref(), Some(c.as_str()));
+        assert_eq!(at(&items, &grid).active_descendant.as_deref(), Some(c.as_str()));
         let info = rt.elements();
         let cursor = info.iter().find(|e| e.key.as_deref() == Some("c")).unwrap();
         let selected = info.iter().find(|e| e.key.as_deref() == Some("a")).unwrap();
@@ -1107,7 +1107,7 @@ mod tests {
         rt.update(|s, _| s.show_c = false);
         rt.frame(0.0);
         let hidden = rt.web_a11y_items();
-        assert!(at(&hidden, &path(&rt, "grid")).activedescendant.is_none());
+        assert!(at(&hidden, &path(&rt, "grid")).active_descendant.is_none());
         rt.update(|s, _| { s.show_c = true; s.c_selected = true; });
         rt.frame(0.0);
         let search = path(&rt, "search");
@@ -1119,12 +1119,12 @@ mod tests {
         assert_eq!(editor.controls.as_deref(), Some(path(&rt, "hits").as_str()));
         assert!(editor.edit.as_ref().is_some_and(|e| e.single));
         assert!(!focused.iter().any(|it| it.path == path(&rt, "search-shell")));
-        assert_eq!(editor.activedescendant.as_deref(), Some(path(&rt, "opt-c").as_str()));
-        assert!(at(&focused, &path(&rt, "other")).activedescendant.is_none());
+        assert_eq!(editor.active_descendant.as_deref(), Some(path(&rt, "opt-c").as_str()));
+        assert!(at(&focused, &path(&rt, "other")).active_descendant.is_none());
         assert!(at(&focused, &path(&rt, "other")).controls.is_none());
         let grip = at(&focused, &path(&rt, "grip"));
         assert_eq!(grip.controls.as_deref(), Some(path(&rt, "pane").as_str()));
-        assert_eq!(grip.orientation, Some(crate::Axis::Vertical));
+        assert_eq!(grip.orientation, Some(crate::Orientation::Vertical));
         assert!(focused.iter().any(|it| it.path == path(&rt, "pane")));
         assert!(at(&focused, &path(&rt, "stale")).controls.is_none());
         assert!(at(&focused, &path(&rt, "dup-owner")).controls.is_none());

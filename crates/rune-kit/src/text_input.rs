@@ -298,7 +298,7 @@ impl TextInput {
         value = value.child(field);
         let mut e = row()
             .role("textbox")
-            .fallback_label(self.placeholder.clone())
+            .placeholder_label(self.placeholder.clone())
             .h(height)
             .pr(8.0)
             .gap(8.0)
@@ -466,7 +466,7 @@ impl TextArea {
         }
         let field = self.edits.apply(field, disabled);
         let line = style.line_px();
-        let mut e = col().role("textbox").fallback_label(self.placeholder.clone()).padding(8.0);
+        let mut e = col().role("textbox").placeholder_label(self.placeholder.clone()).padding(8.0);
         e = if let Some((min_rows, max_rows)) = self.grow {
             let viewport = rune::auto_grow(field, min_rows, max_rows);
             e.child(match self.max_height {

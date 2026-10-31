@@ -173,7 +173,7 @@ impl<S: 'static> Runtime<S> {
     /// window reaches nothing; a drop without a position goes to the root.
     fn drop_target(&self, paths: &[PathBuf], at: Option<(f32, f32)>) -> Option<Target> {
         let ok = |id: &NodeId| self.node_index.get(id).copied()
-            .filter(|&i| i < self.nodes.len() && !self.subtree_exiting(i) && self.allowed(i));
+            .filter(|&i| i < self.nodes.len() && !self.subtree_exiting(i) && self.accepts_input(i));
         let start = match at {
             None => None,
             Some((x, y)) if !self.in_viewport(x, y) => return None,
@@ -194,7 +194,7 @@ impl<S: 'static> Runtime<S> {
         let root = self.active_modal().unwrap_or_else(|| self.app_root());
         std::iter::successors(start, |&i| self.nodes[i].parent)
             .chain(std::iter::once(root).filter(|&r| r < self.nodes.len()))
-            .filter(|&i| self.allowed(i) && !self.subtree_exiting(i))
+            .filter(|&i| self.accepts_input(i) && !self.subtree_exiting(i))
             .find_map(|i| {
                 let drop = self.nodes[i].handlers.drop.as_ref()?;
                 let (files, rejected) = drop.split(paths);

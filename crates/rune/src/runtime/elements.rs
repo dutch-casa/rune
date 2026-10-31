@@ -80,7 +80,7 @@ pub struct ElementInfo {
     /// None when unset, stale, or ambiguous.
     pub controls: Option<String>,
     /// [`El::orientation`]. None when the element does not declare one.
-    pub orientation: Option<crate::Axis>,
+    pub orientation: Option<crate::Orientation>,
     /// How far [`El::sticky_top`], [`El::sticky_bottom`] or [`El::sticky_left`] moved it from
     /// where scrolling put it this frame, in points: down for a stuck header, up for a stuck
     /// footer, right for a stuck left element, 0 when it isn't stuck. `rect` already includes it.
@@ -266,7 +266,7 @@ impl<S: 'static> Runtime<S> {
                     focusable: self.can_focus(i),
                     focused: self.focused.as_deref() == Some(&n.path),
                     focus_visible: self.keyboard_focus && self.focused.as_deref() == Some(&n.path),
-                    inert: !self.allowed(i) || exiting,
+                    inert: !self.accepts_input(i) || exiting,
                     exiting,
                     path: n.path.clone(),
                     key: n.key.clone(),

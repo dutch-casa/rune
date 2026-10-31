@@ -931,7 +931,7 @@ fn arrows_on_the_grip_step_the_pane_width() {
     let grip = find(&rt, "sidebar-grip");
     let range = grip.range.expect("the grip exposes its real width");
     assert_eq!((range.value, range.min, range.max), (rt.state.sidebar.width(), rt.state.sidebar.min_width(), rt.state.sidebar.max_width()));
-    assert_eq!(grip.orientation, Some(rune::Axis::Vertical));
+    assert_eq!(grip.orientation, Some(rune::Orientation::Vertical));
     assert_eq!(grip.controls.as_deref(), Some(find(&rt, "sidebar-pane").path.as_str()));
 }
 

@@ -85,7 +85,7 @@ impl<S: 'static> Runtime<S> {
     fn help_at(&self, x: f32, y: f32) -> Option<usize> {
         let &(id, _, seq) = self.help.hits.iter().rev().find(|&&(id, r, _)| self.hit_contains(id, r, x, y))?;
         let h = *self.node_index.get(&id)?;
-        if self.subtree_exiting(h) || !self.allowed(h) { return None; }
+        if self.subtree_exiting(h) || !self.accepts_input(h) { return None; }
         let over = self.hits.iter().enumerate().rev().find(|&(_, &(id, r))| self.hit_contains(id, r, x, y));
         if let Some((k, (top, _))) = over
             && k > seq
@@ -128,7 +128,7 @@ impl<S: 'static> Runtime<S> {
             for &(id, r, seq) in &self.help.hits {
                 let Some(&i) = self.node_index.get(&id) else { continue };
                 let Some(text) = &self.nodes[i].help else { continue };
-                if self.subtree_exiting(i) || !self.allowed(i) { continue; }
+                if self.subtree_exiting(i) || !self.accepts_input(i) { continue; }
                 regions.extend(self.unoccluded(i, r, seq).into_iter().map(|p| (p, text.clone())));
             }
             self.help.regions = regions;

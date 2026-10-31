@@ -740,7 +740,7 @@ fn dock(d: &Dock, key: &str, p: Pane, leading: bool, content: Contents) -> El {
         let max = s.max_width();
         let width = s.width();
         let value = if width.is_finite() { width.round().clamp(min, max) } else { width };
-        grip = grip.value_range(value, min..=max).orientation(rune::Axis::Vertical).controls(key);
+        grip = grip.value_range(value, min..=max).orientation(rune::Orientation::Vertical).controls(key);
         grip = if leading { grip.pin(None, Some(0.0), Some(0.0), Some(0.0)) } else { grip.pin(Some(0.0), Some(0.0), None, Some(0.0)) };
         if floating {
             grip = grip.raise();

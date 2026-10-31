@@ -12,7 +12,7 @@ impl<S: 'static> Runtime<S> {
         let mut text = None;
         loop {
             let n = &self.nodes[index];
-            if self.subtree_exiting(index) || !self.allowed(index) { break; }
+            if self.subtree_exiting(index) || !self.accepts_input(index) { break; }
             if n.handlers.on_secondary_press.is_some() || self.secondary_link_at(index, x, y).is_some() { return Some(&n.path); }
             if text.is_none() && self.is_selectable(index) { text = Some(n.path.as_str()); }
             let Some(p) = n.parent else { break };
@@ -70,7 +70,7 @@ impl<S: 'static> Runtime<S> {
         let mut index = focused;
         loop {
             let n = &self.nodes[index];
-            if !self.allowed(index) { return false; }
+            if !self.accepts_input(index) { return false; }
             if let Some(f) = n.handlers.on_secondary_press.clone() {
                 let path = n.path.clone();
                 let point = self.pointer_event(index, x, y);

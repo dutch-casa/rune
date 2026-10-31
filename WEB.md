@@ -200,14 +200,14 @@ its control references that node with `aria-labelledby`. An explicit different c
 takes precedence. Groups with several editors need a name for each editor. Icon-only controls
 need a label or help text that names their action.
 
-`El::fallback_label` replaces an existing name; it does not mean “set only if missing.”
+`El::placeholder_label` is a placeholder a field caption may replace; it does not mean “set only if missing.”
 Use `label_if_missing` to supply a composed caption without replacing an explicit control name.
 
 For custom controls, use `El::role`, `label`, `checked(bool)`, `indeterminate(bool)`,
 `disabled(bool)` and `invalid(bool)` as appropriate. `value_range(value, min..=max)` requires
 finite, ordered bounds and an in-range value; it panics rather than clamping invalid input.
 `controls(key)` resolves one current target. A missing or ambiguous target leaves the
-relationship unset. `orientation(Axis)` describes the control's orientation.
+relationship unset. `orientation(Orientation)` describes the control's orientation.
 
 Roles do not implement keyboard behavior. Kit supplies that behavior for its controls.
 Its tree and table cursors are separate from selection. `focus_cursor(bool)` exposes that

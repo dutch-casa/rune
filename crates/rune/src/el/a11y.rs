@@ -27,9 +27,9 @@ pub struct ValueRange {
 
 /// The orientation of a separator or range control.
 ///
-/// Unset means the host default. A vertical splitter sets [`Axis::Vertical`].
+/// Unset means the host default. A vertical splitter sets [`Orientation::Vertical`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Axis {
+pub enum Orientation {
     Horizontal,
     Vertical,
 }
@@ -47,7 +47,7 @@ pub(crate) struct A11y {
     pub range: Option<ValueRange>,
     /// Stable key of the controlled node. Only set by [`El::controls`].
     pub controls: Option<String>,
-    pub orientation: Option<Axis>,
+    pub orientation: Option<Orientation>,
 }
 
 
@@ -73,8 +73,8 @@ impl El {
         self.a11y.disabled = disabled;
         self
     }
-    /// Replace any existing name with a fallback that a composed field can replace.
-    pub fn fallback_label(mut self, label: impl Into<String>) -> Self {
+    /// A placeholder a field caption may replace.
+    pub fn placeholder_label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
         self.a11y.label_source = LabelSource::Fallback;
         self
@@ -133,8 +133,8 @@ impl El {
         self
     }
     /// The orientation of this separator or range control.
-    pub fn orientation(mut self, axis: Axis) -> Self {
-        self.a11y.orientation = Some(axis);
+    pub fn orientation(mut self, orientation: Orientation) -> Self {
+        self.a11y.orientation = Some(orientation);
         self
     }
 }

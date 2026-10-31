@@ -761,7 +761,7 @@ impl<S: 'static> Runtime<S> {
                 .and_then(|_| input_caret(n, r, sc, s, &mut self.input_scroll));
             if let Some((_, area)) = input_caret
                 && n.input.as_ref().is_some_and(|input| input.access.is_some() && !input.edit.is_secure()) { self.ime_area = Some(area); }
-            else if n.ime_cursor && self.ime_area.is_none() && self.allowed(i) && !self.subtree_exiting(i) { self.ime_area = Some(app_ime::area(r, s)); }
+            else if n.ime_cursor && self.ime_area.is_none() && self.accepts_input(i) && !self.subtree_exiting(i) { self.ime_area = Some(app_ime::area(r, s)); }
             let paint_visible = if in_cache {
                 r[2] >= clip[0] - filter_margin - 2.0
                     && r[0] <= clip[2] + filter_margin + 2.0

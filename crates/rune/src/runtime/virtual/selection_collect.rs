@@ -326,7 +326,7 @@ impl<S: 'static> Runtime<S> {
 
         // 1. Find the first selectable text under `root`.
         let first_before = (root..list_node)
-            .filter(|&j| inside(&self.nodes, j) && self.is_selectable(j) && !self.subtree_exiting(j) && self.allowed(j))
+            .filter(|&j| inside(&self.nodes, j) && self.is_selectable(j) && !self.subtree_exiting(j) && self.accepts_input(j))
             .find(|&j| match &g_path {
                 Some(gp) => self.group_of(j).is_some_and(|g| &self.nodes[g].path == gp),
                 None => true,
@@ -348,7 +348,7 @@ impl<S: 'static> Runtime<S> {
                         .filter(|&j| {
                             (self.nodes[j].path == row_path
                                 || self.nodes[j].path.strip_prefix(&row_path).is_some_and(|s| s.starts_with('/')))
-                                && self.is_selectable(j) && !self.subtree_exiting(j) && self.allowed(j)
+                                && self.is_selectable(j) && !self.subtree_exiting(j) && self.accepts_input(j)
                         })
                         .find(|&j| match &g_path {
                             Some(gp) => self.group_of(j).is_some_and(|g| &self.nodes[g].path == gp),
@@ -388,7 +388,7 @@ impl<S: 'static> Runtime<S> {
         let last_after = (list_end + 1..self.nodes.len())
             .take_while(|&j| inside(&self.nodes, j))
             .filter(|&j| {
-                self.is_selectable(j) && !self.subtree_exiting(j) && self.allowed(j)
+                self.is_selectable(j) && !self.subtree_exiting(j) && self.accepts_input(j)
                     && self.group_of(j).is_some_and(|g| self.nodes[g].path == gp)
             })
             .last()
@@ -408,7 +408,7 @@ impl<S: 'static> Runtime<S> {
                         .filter(|&j| {
                             (self.nodes[j].path == row_path
                                 || self.nodes[j].path.strip_prefix(&row_path).is_some_and(|s| s.starts_with('/')))
-                                && self.is_selectable(j) && !self.subtree_exiting(j) && self.allowed(j)
+                                && self.is_selectable(j) && !self.subtree_exiting(j) && self.accepts_input(j)
                                 && self.group_of(j).is_some_and(|g| self.nodes[g].path == gp)
                         })
                         .last()
@@ -439,7 +439,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Carries out a `Tx::select_text`, `select_all_text` or `clear_text_selection`.
     pub(crate) fn select_request(&mut self, request: SelectRequest) {
-        let named = |key: &str| (0..self.nodes.len()).find(|&i| self.nodes[i].named(key) && !self.subtree_exiting(i) && self.allowed(i));
+        let named = |key: &str| (0..self.nodes.len()).find(|&i| self.nodes[i].named(key) && !self.subtree_exiting(i) && self.accepts_input(i));
         match request {
             SelectRequest::Clear => self.clear_text_selection(),
             SelectRequest::Range(key, range) => {
@@ -474,7 +474,7 @@ impl<S: 'static> Runtime<S> {
                 }
                 let inside = |j: usize| j == i || std::iter::successors(self.nodes[j].parent, |&p| self.nodes[p].parent).any(|p| p == i);
                 let texts = || (i..self.nodes.len()).take_while(|&j| inside(j))
-                    .filter(|&j| self.is_selectable(j) && !self.subtree_exiting(j) && self.allowed(j));
+                    .filter(|&j| self.is_selectable(j) && !self.subtree_exiting(j) && self.accepts_input(j));
                 let Some(first) = texts().next() else { return };
                 let last = match self.group_of(first) {
                     Some(g) => texts().filter(|&j| self.group_of(j) == Some(g)).last().unwrap_or(first),

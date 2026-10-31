@@ -191,7 +191,7 @@ impl<S: 'static> Runtime<S> {
         self.dismiss_help();
         let latched = self.wheel_lock.scroller.filter(|id| {
             self.node_index.get(id).is_some_and(|&i| {
-                self.nodes[i].scroll.is_some() && self.nodes[i].scroll_axes.x() && !self.subtree_exiting(i) && self.allowed(i)
+                self.nodes[i].scroll.is_some() && self.nodes[i].scroll_axes.x() && !self.subtree_exiting(i) && self.accepts_input(i)
             })
         });
         let Some(id) = latched.or_else(|| self.scroll_at_axis(x, y, true)) else { return };

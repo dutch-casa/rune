@@ -8,7 +8,7 @@ impl<S: 'static> crate::Runtime<S> {
         }
         let Some(path) = event["path"].as_str() else { return false };
         let Some(i) = self.live(path) else { return false };
-        if !self.allowed(i) || self.subtree_exiting(i) || self.subtree_unmounted(i)
+        if !self.accepts_input(i) || self.subtree_exiting(i) || self.subtree_unmounted(i)
             || std::iter::successors(Some(i), |&j| self.nodes[j].parent).any(|j| self.nodes[j].vis.opacity <= 0.01)
         { return false; }
         let rect = super::rect4(self.drawn_box(i));

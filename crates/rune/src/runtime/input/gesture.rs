@@ -140,7 +140,7 @@ impl<S: 'static> Runtime<S> {
         let hit = self.hits.iter().rev().find(|&&(id, r)| self.hit_contains(id, r, x, y)).and_then(|(id, _)| self.node_index.get(id).copied());
         // A scroll view without handlers of its own isn't a hit: one inside the hit wins.
         let scroll = (0..self.nodes.len()).rev().find(|&i| self.nodes[i].scroll.is_some() && !self.subtree_exiting(i)
-            && self.allowed(i) && self.node_contains(i, x, y));
+            && self.accepts_input(i) && self.node_contains(i, x, y));
         let inside = |s: usize, h: usize| std::iter::successors(self.nodes[s].parent, |&p| self.nodes[p].parent).any(|p| p == h);
         let start = match (hit, scroll) {
             (Some(h), Some(s)) if inside(s, h) => Some(s),
@@ -150,7 +150,7 @@ impl<S: 'static> Runtime<S> {
         let mut chain = Vec::new();
         let mut at = start;
         while let Some(i) = at {
-            if self.subtree_exiting(i) || !self.allowed(i) { break; }
+            if self.subtree_exiting(i) || !self.accepts_input(i) { break; }
             let n = &self.nodes[i];
             if n.handlers.gestures.as_deref().is_some_and(&has) { chain.push(n.path.clone()); }
             if stop_at_scroll && n.scroll.is_some() { break; }
@@ -161,7 +161,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Element `path` (not exiting or inert) and the handler `pick` takes from its canvas input.
     fn gesture_handler<F>(&self, path: &str, pick: impl Fn(&CanvasInput) -> Option<F>) -> Option<(usize, F)> {
-        let i = self.nodes.iter().enumerate().position(|(i, n)| n.path == path && !self.subtree_exiting(i) && self.allowed(i))?;
+        let i = self.nodes.iter().enumerate().position(|(i, n)| n.path == path && !self.subtree_exiting(i) && self.accepts_input(i))?;
         Some((i, pick(self.nodes[i].handlers.gestures.as_deref()?)?))
     }
 
@@ -180,7 +180,7 @@ impl<S: 'static> Runtime<S> {
         self.dismiss_help();
         let hit = self.hits.iter().rev().find(|&&(id, r)| self.hit_contains(id, r, x, y)).and_then(|(id, _)| self.node_index.get(id).copied());
         let target = std::iter::successors(hit, |&i| self.nodes[i].parent)
-            .take_while(|&i| !self.subtree_exiting(i) && self.allowed(i))
+            .take_while(|&i| !self.subtree_exiting(i) && self.accepts_input(i))
             .find(|&i| {
                 let n = &self.nodes[i];
                 n.handlers.gestures.as_ref().is_some_and(|g| g.buttons & button.bit() != 0) && (n.handlers.on_press.is_some() || n.handlers.on_drag.is_some())
@@ -227,7 +227,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Some reachable element has an `on_wheel` handler.
     pub(crate) fn hears_wheel(&self) -> bool {
-        self.nodes.iter().enumerate().any(|(i, n)| n.handlers.get().is_some_and(|h| h.gestures.as_ref().is_some_and(|g| g.wheel.is_some())) && self.allowed(i))
+        self.nodes.iter().enumerate().any(|(i, n)| n.handlers.get().is_some_and(|h| h.gestures.as_ref().is_some_and(|g| g.wheel.is_some())) && self.accepts_input(i))
     }
 
     /// Some element hears key releases, so a host maps them to logical keys.
@@ -284,7 +284,7 @@ impl<S: 'static> Runtime<S> {
         for start in [pressed, focused].into_iter().flatten() {
             let mut at = Some(start);
             while let Some(i) = at {
-                if !self.allowed(i) { break; }
+                if !self.accepts_input(i) { break; }
                 if !chain.contains(&i) { chain.push(i); }
                 at = self.nodes[i].parent;
             }
@@ -294,7 +294,7 @@ impl<S: 'static> Runtime<S> {
         // the modal, not only a handler on the root.
         let at_rest = chain.is_empty() || (self.active_modal().is_some() && focused == self.active_modal() && pressed.is_none_or(|p| Some(p) == focused));
         if at_rest {
-            let rest: Vec<usize> = (0..self.nodes.len()).rev().filter(|&i| !chain.contains(&i) && self.allowed(i) && self.nodes[i].focus.key_up.is_some()).collect();
+            let rest: Vec<usize> = (0..self.nodes.len()).rev().filter(|&i| !chain.contains(&i) && self.accepts_input(i) && self.nodes[i].focus.key_up.is_some()).collect();
             chain.extend(rest);
         } else if pressed.is_some() && focused.is_some() && pressed != focused {
             // Keep shared ancestors (such as the root) after both focused elements.

@@ -150,7 +150,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Whether node `i` is a live scroll view whose content overflows it.
     pub(super) fn pageable(&self, i: usize) -> bool {
-        self.nodes[i].scroll.is_some() && !self.subtree_exiting(i) && self.allowed(i)
+        self.nodes[i].scroll.is_some() && !self.subtree_exiting(i) && self.accepts_input(i)
             && self.scrolls.get(&self.nodes[i].id).is_some_and(|st| st.max > 0.5)
     }
 
@@ -250,7 +250,7 @@ impl<S: 'static> Runtime<S> {
         let Some(i) = self.focused_index() else { return false };
         if !self.can_focus(i) || self.focused_input().is_some() { return false; }
         let handlers: Vec<_> = std::iter::successors(Some(i), |&j| self.nodes[j].parent)
-            .take_while(|&j| self.allowed(j) && !self.subtree_exiting(j))
+            .take_while(|&j| self.accepts_input(j) && !self.subtree_exiting(j))
             .filter_map(|j| self.nodes[j].focus.key.clone())
             .collect();
         handlers.into_iter().any(|f| Tx::took(f(states!(self), ev, tx), tx))
@@ -263,7 +263,7 @@ impl<S: 'static> Runtime<S> {
         let Some(i) = self.focused_index() else { return false; };
         if self.focused_input().is_none() { return false; }
         let handlers: Vec<_> = std::iter::successors(self.nodes[i].parent, |&j| self.nodes[j].parent)
-            .take_while(|&j| self.allowed(j) && !self.subtree_exiting(j))
+            .take_while(|&j| self.accepts_input(j) && !self.subtree_exiting(j))
             .filter_map(|j| self.nodes[j].focus.key.clone())
             .collect();
         handlers.into_iter().any(|f| Tx::took(f(states!(self), ev, tx), tx))
@@ -284,7 +284,7 @@ impl<S: 'static> Runtime<S> {
             }).max_by_key(|(_, n)| n.path.len()).map(|(i, _)| i)?;
             (ancestor, input.as_ref())
         };
-        self.allowed(owner).then_some(input)
+        self.accepts_input(owner).then_some(input)
     }
 
     /// What [`Tx::focused`] reports: the focused link's id, else the focused element's key,

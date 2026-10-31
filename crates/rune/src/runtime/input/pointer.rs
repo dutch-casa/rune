@@ -167,7 +167,7 @@ impl<S: 'static> Runtime<S> {
             self.input_click.clear();
         }
         if let Some(i) = self.active_modal()
-            && target.is_none_or(|t| !self.allowed(t))
+            && target.is_none_or(|t| !self.accepts_input(t))
         {
             if self.nodes[i].handlers.modal.as_ref().is_some_and(|m| m.outside) {
                 self.queue.push(Action::Dismiss(self.nodes[i].path.clone()));
@@ -219,7 +219,7 @@ impl<S: 'static> Runtime<S> {
         // Inside a control that owns its keyboard (`El::on_key`), a click on any part of it
         // focuses it, as a click on a table view's row focuses the table.
         let keyed = (!n.focus.enabled && !self.is_selectable(ti)).then(|| std::iter::successors(n.parent, |&p| self.nodes[p].parent)
-            .take_while(|&p| self.allowed(p))
+            .take_while(|&p| self.accepts_input(p))
             .find(|&p| self.nodes[p].focus.key.is_some() && self.can_focus(p))).flatten();
         let in_textbox = std::iter::successors(n.parent, |&p| self.nodes[p].parent).any(|p| self.textbox_input(p).is_some());
         let (preserve_focus, keeps) = (self.press_keeps_focus(ti), self.press_keeps_selection(ti));
@@ -347,7 +347,7 @@ impl<S: 'static> Runtime<S> {
         // Selectable text shows its I-beam even where its presses go to a row around it.
         let target = match &self.capture {
             Some(_) if self.text_sel.dragging => self.selection_holder(),
-            Some((p, _)) => self.live_index(p).filter(|&i| self.allowed(i)),
+            Some((p, _)) => self.live_index(p).filter(|&i| self.accepts_input(i)),
             // Moving layout holds hover: the cursor stays with what the pointer was over.
             None => self.held_hover().flatten().or_else(|| self.selectable_at(x, y).or_else(|| self.primary_target(x, y))),
         };
@@ -380,7 +380,7 @@ impl<S: 'static> Runtime<S> {
             .iter()
             .enumerate()
             .rev()
-            .filter(|(i, n)| n.scroll.is_some() && n.scroll_axes.has(horizontal) && !self.subtree_exiting(*i) && self.allowed(*i))
+            .filter(|(i, n)| n.scroll.is_some() && n.scroll_axes.has(horizontal) && !self.subtree_exiting(*i) && self.accepts_input(*i))
             .find(|(i, _)| self.node_contains(*i, x, y))
             .map(|(_, n)| n.id)
     }

@@ -448,7 +448,7 @@ impl<S: 'static> Runtime<S> {
         for j in (row_node..self.nodes.len()).take_while(|&j| inside_row(j)) {
             if self.is_selectable(j)
                 && !self.subtree_exiting(j)
-                && self.allowed(j)
+                && self.accepts_input(j)
                 && self.group_of(j).is_some_and(|g| self.nodes[g].path == g_path)
             {
                 (&self.nodes[j].path, self.content_of(j)).hash(&mut hasher);
@@ -610,7 +610,7 @@ impl<S: 'static> Runtime<S> {
     /// A unique live selectable node at `path`'s keyed identity when an unkeyed ancestor moved.
     fn rebound(&self, path: &str, content: &str, upto: usize) -> Option<usize> {
         let mut hits = (0..self.nodes.len()).filter(|&i| {
-            self.is_selectable(i) && !self.subtree_exiting(i) && self.allowed(i)
+            self.is_selectable(i) && !self.subtree_exiting(i) && self.accepts_input(i)
                 && same_keyed_path(path, &self.nodes[i].path) && kept(content, self.content_of(i), upto)
         });
         let first = hits.next()?;

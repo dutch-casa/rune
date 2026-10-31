@@ -101,7 +101,7 @@ impl<S: 'static> Runtime<S> {
         if let Some((captured, _)) = &self.capture {
             for path in &self.hover_within {
                 if !inside.contains(path) && holds(path, captured)
-                    && self.nodes.iter().enumerate().any(|(i, n)| n.path == *path && self.allowed(i))
+                    && self.nodes.iter().enumerate().any(|(i, n)| n.path == *path && self.accepts_input(i))
                 {
                     inside.push(path.clone());
                 }
@@ -276,7 +276,7 @@ impl<S: 'static> Runtime<S> {
     pub(crate) fn hover_live(&self, path: &str) -> Option<usize> {
         (0..self.nodes.len())
             .find(|&i| self.nodes[i].path == path && !self.subtree_exiting(i) && !self.subtree_unmounted(i))
-            .filter(|&i| self.allowed(i))
+            .filter(|&i| self.accepts_input(i))
     }
 
     fn captured(&self) -> Option<&str> {
@@ -288,7 +288,7 @@ impl<S: 'static> Runtime<S> {
     fn hovered_alone(&self) -> Option<usize> {
         let (x, y) = self.pointer?;
         (0..self.nodes.len())
-            .filter(|&i| self.nodes[i].vis.hover_alone && !self.is_exiting(self.nodes[i].id) && self.allowed(i) && self.node_contains(i, x, y))
+            .filter(|&i| self.nodes[i].vis.hover_alone && !self.is_exiting(self.nodes[i].id) && self.accepts_input(i) && self.node_contains(i, x, y))
             .max_by_key(|&i| self.nodes[i].path.len())
     }
 
@@ -300,7 +300,7 @@ impl<S: 'static> Runtime<S> {
         let inside = self.pointer.is_some_and(|(x, y)| self.node_contains(i, x, y));
         let capture_inside = if self.secondary_capture.is_some() { inside } else { self.capture_inside };
         let held = captured == Some(n.path.as_str()) && capture_inside;
-        let allowed = self.allowed(i);
+        let allowed = self.accepts_input(i);
         // A held press stays hovered while it's inside, though a press scale shrank the drawn
         // rect away from the pointer. A group stays hovered while a descendant holds the press.
         let shadowed = alone.is_some_and(|a| a != i && holds(&n.path, &self.nodes[a].path));
@@ -347,7 +347,7 @@ impl<S: 'static> Runtime<S> {
             } else {
                 self.capture_inside
             };
-            let down = self.allowed(i) && captured == Some(n.path.as_str()) && capture_inside;
+            let down = self.accepts_input(i) && captured == Some(n.path.as_str()) && capture_inside;
             let pressed = down && n.vis.press.a > 0.0;
             let id = n.id;
             changed |= self.scene.store().target(id, P_PRESS).unwrap_or(0.0) != pressed as u8 as f32;

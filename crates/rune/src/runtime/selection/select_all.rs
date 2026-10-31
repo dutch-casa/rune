@@ -34,7 +34,7 @@ impl<S: 'static> Runtime<S> {
                 }
             };
         }
-        let live = |i: usize| self.is_selectable(i) && !self.subtree_exiting(i) && self.allowed(i);
+        let live = |i: usize| self.is_selectable(i) && !self.subtree_exiting(i) && self.accepts_input(i);
         let picked = self.text_sel.pick.0.as_deref().and_then(|p| self.live(p)).filter(|&u| {
             if self.nodes[u].selection_group { (u + 1..self.nodes.len()).any(|j| self.member(j, u)) } else { live(u) }
         });

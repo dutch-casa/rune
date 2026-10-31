@@ -327,8 +327,8 @@ pub(crate) fn tree_json<S>(rt: &Runtime<S>, real_t: f64) -> Value {
             }
             if let Some(axis) = e.orientation {
                 v["orientation"] = match axis {
-                    crate::Axis::Horizontal => "horizontal",
-                    crate::Axis::Vertical => "vertical",
+                    crate::Orientation::Horizontal => "horizontal",
+                    crate::Orientation::Vertical => "vertical",
                 }.into();
             }
             if rt.element_is_secure(&e.path) {

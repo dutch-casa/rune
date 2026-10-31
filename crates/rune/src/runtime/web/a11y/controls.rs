@@ -98,7 +98,7 @@ impl<S: 'static> crate::Runtime<S> {
         }
         for (k, &origin) in origins.iter().enumerate() {
             if let Slot::One(desc) = slot[origin] {
-                items[k].activedescendant = Some(items[desc].path.clone());
+                items[k].active_descendant = Some(items[desc].path.clone());
             }
         }
         let Some(focus) = self.focused_index().filter(|&i| self.nodes[i].input.is_some()) else { return; };
@@ -122,7 +122,7 @@ impl<S: 'static> crate::Runtime<S> {
             };
         }
         if let Some(k) = cursor {
-            items[editor].activedescendant = Some(items[k].path.clone());
+            items[editor].active_descendant = Some(items[k].path.clone());
         }
     }
 }

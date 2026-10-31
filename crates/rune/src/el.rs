@@ -129,7 +129,7 @@ pub(crate) type DragEndFn = Rc<dyn Fn(crate::states::States<'_>, crate::DragOutc
 pub(crate) type EditFn = Rc<dyn for<'a> Fn(crate::states::States<'a>) -> &'a mut TextEdit>;
 
 pub(crate) use crate::el::a11y::A11y;
-pub use crate::el::a11y::Axis;
+pub use crate::el::a11y::Orientation;
 pub use crate::el::a11y::ValueRange;
 pub(crate) use crate::el::focus::FocusSpec;
 pub(crate) use crate::el::handler_set::Handlers;

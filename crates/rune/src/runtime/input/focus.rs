@@ -84,7 +84,7 @@ impl<S: 'static> Runtime<S> {
         self.nodes.get(i).is_some_and(|n| !n.inert) && (self.active_modal().is_none() || self.modal_members.get(i).copied().unwrap_or(false))
     }
     /// Input admission is stricter than semantic exposure: disabled content stays readable.
-    pub(super) fn allowed(&self, i: usize) -> bool {
+    pub(super) fn accepts_input(&self, i: usize) -> bool {
         self.in_scope(i) && !self.nodes[i].a11y.disabled
     }
     pub(super) fn can_focus(&self, i: usize) -> bool {
@@ -100,7 +100,7 @@ impl<S: 'static> Runtime<S> {
             if self.nodes[p].vis.opacity <= 0.0 { return false; }
             parent = self.nodes[p].parent;
         }
-        self.allowed(i) && !self.subtree_exiting(i) && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
+        self.accepts_input(i) && !self.subtree_exiting(i) && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
     }
     /// Return takes a focused link or row. Browser comboboxes also take Return;
     /// desktop buttons retain the window's default-button behavior.
@@ -476,7 +476,7 @@ impl<S: 'static> Runtime<S> {
         if !self.modal_stack.iter().any(|(p, _)| p == &path) {
             // A field in the modal that asked for focus took it earlier in this commit; closing
             // returns to what had focus before.
-            let inside = self.focused_index().is_some_and(|j| self.allowed(j));
+            let inside = self.focused_index().is_some_and(|j| self.accepts_input(j));
             let restore = if inside { self.focus_before_commit.clone() } else { self.focus_target() };
             self.modal_stack.push((path.clone(), restore));
             // Cancel any gesture captured before the modal opened.
@@ -484,7 +484,7 @@ impl<S: 'static> Runtime<S> {
             self.secondary_capture = None;
             self.hovered = None;
         }
-        if !self.focused_index().is_some_and(|j| self.allowed(j)) {
+        if !self.focused_index().is_some_and(|j| self.accepts_input(j)) {
             let target = self.tab_order().first().map(|&j| self.nodes[j].path.clone()).unwrap_or(path);
             self.set_focus(Some(target), self.keyboard_focus);
         }

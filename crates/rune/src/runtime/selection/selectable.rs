@@ -235,7 +235,7 @@ impl<S: 'static> Runtime<S> {
     }
 
     pub(super) fn live(&self, path: &str) -> Option<usize> {
-        (0..self.nodes.len()).find(|&i| self.nodes[i].path == path && !self.subtree_exiting(i) && self.allowed(i))
+        (0..self.nodes.len()).find(|&i| self.nodes[i].path == path && !self.subtree_exiting(i) && self.accepts_input(i))
     }
 
     pub(super) fn content_of(&self, i: usize) -> &str {
@@ -253,7 +253,7 @@ impl<S: 'static> Runtime<S> {
 
     /// Node `j` is a selectable text of group `g` (not of a group inside it).
     pub(super) fn member(&self, j: usize, g: usize) -> bool {
-        self.is_selectable(j) && self.group_of(j) == Some(g) && !self.subtree_exiting(j) && self.allowed(j)
+        self.is_selectable(j) && self.group_of(j) == Some(g) && !self.subtree_exiting(j) && self.accepts_input(j)
     }
 
     /// Group `g`'s selectable texts, in tree order.
@@ -414,7 +414,7 @@ impl<S: 'static> Runtime<S> {
             return Vec::new();
         }
         let watchers: Vec<usize> = (0..self.nodes.len())
-            .filter(|&i| self.nodes[i].handlers.get().is_some_and(|h| h.on_selection_change.is_some()) && !self.subtree_exiting(i) && self.allowed(i))
+            .filter(|&i| self.nodes[i].handlers.get().is_some_and(|h| h.on_selection_change.is_some()) && !self.subtree_exiting(i) && self.accepts_input(i))
             .collect();
         if watchers.is_empty() && self.sel_heard.by_path.is_empty() { return Vec::new(); }
         let mut selected: Vec<usize> = self.selection_ranges().into_iter().filter(|r| r.1 < r.2).map(|r| r.0).collect();
@@ -502,7 +502,7 @@ impl<S: 'static> Runtime<S> {
             let g = self.group_of(first);
             let texts = (p..self.nodes.len())
                 .take_while(|&j| around(p, j))
-                .filter(|&j| self.is_selectable(j) && !self.subtree_exiting(j) && self.allowed(j))
+                .filter(|&j| self.is_selectable(j) && !self.subtree_exiting(j) && self.accepts_input(j))
                 .filter(|&j| match g { Some(g) => self.group_of(j) == Some(g), None => j == first })
                 .map(|j| self.selected_piece(j, range_in(&ranges, j).map_or(0..0, |(a, b)| a..b), Some(p)))
                 .collect();

@@ -31,7 +31,7 @@ impl<S: 'static> Runtime<S> {
     /// What a press on node `i` leaves as it is, from it and its ancestors.
     fn on_press_keeps(&self, i: usize) -> OnPress {
         std::iter::successors(Some(i), |&p| self.nodes[p].parent)
-            .take_while(|&p| self.allowed(p))
+            .take_while(|&p| self.accepts_input(p))
             .map(|p| self.nodes[p].focus.preserve_on_press)
             .fold(OnPress::default(), |a, b| OnPress { focus: a.focus || b.focus, selection: a.selection || b.selection })
     }
