@@ -153,11 +153,14 @@ fn a_header_click_sorts_and_shows_the_direction() {
     click(&mut rt, r[0] + 20.0, r[1] + r[3] * 0.5);
     assert_eq!(rt.state.sorts, [("size".to_owned(), SortDir::Ascending)]);
     assert_eq!(rt.state.table.sort(), Some(("size", SortDir::Ascending)));
-    assert_eq!(header(&rt, "size").label.as_deref(), Some("Size, sorted ascending"));
+    assert_eq!(header(&rt, "size").label.as_deref(), Some("Size"));
+    assert_eq!(header(&rt, "size").sort, Some(rune::SortDirection::Ascending));
     assert!(rt.state.files.windows(2).all(|w| w[0].size <= w[1].size));
     click(&mut rt, r[0] + 20.0, r[1] + r[3] * 0.5);
     assert_eq!(rt.state.table.sort(), Some(("size", SortDir::Descending)));
-    assert_eq!(header(&rt, "size").label.as_deref(), Some("Size, sorted descending"));
+    assert_eq!(header(&rt, "size").label.as_deref(), Some("Size"));
+    assert_eq!(header(&rt, "size").sort, Some(rune::SortDirection::Descending));
+    assert!(rt.a11y_json().contains("\"sort\":\"descending\""));
     assert_eq!(header(&rt, "name").label.as_deref(), Some("Name"));
     let r = header(&rt, "kind").rect;
     click(&mut rt, r[0] + 20.0, r[1] + r[3] * 0.5);
@@ -187,6 +190,44 @@ fn space_on_a_focused_sortable_header_sorts_and_leaves_row_keys_on_the_grid() {
     press(&mut rt, Key::Down);
     assert_eq!(rt.state.table.cursor().map(str::to_owned), cursor, "arrows on the header do not move the grid");
     assert!(rt.state.opened.is_empty());
+}
+
+#[test]
+fn enter_on_a_focused_sortable_header_sorts() {
+    let mut rt = runtime(App::new(4, false));
+    let focused_header = |rt: &Runtime<App>, id: &str| {
+        rt.elements().iter().any(|e| e.focused && e.role == "columnheader" && e.key.as_deref() == Some(id))
+    };
+    for _ in 0..8 {
+        press(&mut rt, Key::Tab);
+        if focused_header(&rt, "size") { break; }
+    }
+    assert!(focused_header(&rt, "size"));
+    press(&mut rt, Key::Enter);
+    assert_eq!(rt.state.table.sort(), Some(("size", SortDir::Ascending)));
+    assert_eq!(header(&rt, "size").sort, Some(rune::SortDirection::Ascending));
+    assert_eq!(header(&rt, "name").sort, None);
+}
+
+#[test]
+fn arrows_on_the_resize_handle_step_the_column() {
+    let mut rt = runtime(App::new(4, false));
+    let handle = find(&rt, |e| e.label.as_deref() == Some("Resize Size")).remove(0);
+    assert_eq!(handle.role, "separator");
+    assert_eq!(handle.orientation, Some(rune::Orientation::Vertical));
+    let before = handle.range.expect("the handle exposes a width").value;
+    assert!(handle.focusable);
+    let focused = |rt: &Runtime<App>| rt.elements().iter().any(|e| e.focused && e.label.as_deref() == Some("Resize Size"));
+    let mut saw = false;
+    for _ in 0..8 {
+        press(&mut rt, Key::Tab);
+        if focused(&rt) { saw = true; break; }
+    }
+    assert!(saw, "Tab reaches the resize handle");
+    press(&mut rt, Key::Right);
+    assert_eq!(rt.state.table.column_width("size"), Some(before + 8.0));
+    press(&mut rt, Key::Enter);
+    assert!(rt.state.sorts.is_empty(), "Enter on the handle does not sort");
 }
 
 #[test]

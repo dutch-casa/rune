@@ -1,0 +1,1 @@
+- **A column header sorts with Enter and publishes `aria-sort`.** Its resize handle is a separator that moves with the arrow keys.

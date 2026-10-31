@@ -28,9 +28,12 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use rune::{Align, Color, Cursor, Drag, El, GrowthSpec, Key, KeyEvent, Phase, ScrollSpec, TextStyle, Tx, col, el, icon, row, text};
+use rune::{Align, Color, El, GrowthSpec, Key, KeyEvent, ScrollSpec, TextStyle, Tx, col, row, text};
 
 use crate::Kit;
+
+#[path = "table_header.rs"]
+mod header;
 
 /// Which way a column sorts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -536,7 +539,7 @@ impl<S: 'static> Table<S> {
         let columns = Rc::new(columns);
         let sizes: Rc<Vec<Width>> = Rc::new(columns.iter().map(|c| state.column_width(&c.id).map_or(c.width, |w| Width::Fixed(c.clamp(w)))).collect());
 
-        let header = header_row(k, state, &columns, &sizes, &style, on_sort.clone(), get, get_mut);
+        let header = header::header_row(k, state, &columns, &sizes, &style, on_sort.clone(), get, get_mut);
 
         let cols = columns.clone();
         let sz = sizes.clone();
@@ -695,111 +698,6 @@ fn cell_el(c: &TableColumn, w: Width, cell: Cell, style: &TableStyle) -> El {
         CellContent::El(e) => e,
     };
     justify(sized(row().role("gridcell").h_full().px(style.cell_pad).center_y().clip_soft(0.0), c, w), c.align).child(inner)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn header_row<S: 'static>(
-    k: &Kit,
-    state: &TableState,
-    columns: &Rc<Vec<TableColumn>>,
-    sizes: &Rc<Vec<Width>>,
-    style: &TableStyle,
-    on_sort: Option<Rc<dyn Fn(&mut S, &str, SortDir, &mut Tx)>>,
-    get: fn(&S) -> &TableState,
-    get_mut: fn(&mut S) -> &mut TableState,
-) -> El {
-    let _ = get;
-    let mut h = row()
-        .key("header")
-        .role("row")
-        .w_full()
-        .h(style.header_height)
-        .child(el().key("rule").pin(Some(0.0), None, Some(0.0), Some(0.0)).h(1.0).fill(style.rule));
-    let last = columns.len().saturating_sub(1);
-    for (j, c) in columns.iter().enumerate() {
-        let sorted = state.sort().filter(|(id, _)| *id == c.id).map(|(_, d)| d);
-        let label = match sorted {
-            Some(SortDir::Ascending) => format!("{}, sorted ascending", c.title),
-            Some(SortDir::Descending) => format!("{}, sorted descending", c.title),
-            None => c.title.clone(),
-        };
-        let title = text(c.title.clone())
-            .key("title")
-            .font(style.header_font)
-            .color(if sorted.is_some() { style.text } else { style.header_text })
-            .truncate()
-            .shrink()
-            .min_w(0.0)
-            .help_when_truncated(c.title.clone());
-        let mut inner = row().key("inner").gap(2.0).center_y().min_w(0.0).shrink().child(title);
-        if let Some(d) = sorted {
-            let glyph = if d == SortDir::Ascending { k.glyph.chevron_up } else { k.glyph.chevron_down };
-            inner = inner.child(icon(glyph, 14.0).key("sort").color(style.text));
-        }
-        let mut cell = justify(sized(row().role("columnheader").label(label).h_full().px(style.cell_pad).center_y(), c, sizes[j]), c.align)
-            .key(c.id.clone())
-            .child(inner);
-        let id = c.id.clone();
-        cell = cell.on_layout_tx(move |s: &mut S, r: [f32; 4], tx: &mut Tx| {
-            if get_mut(s).laid_out.insert(id.clone(), r[2]) == Some(r[2]) { tx.live_only(); }
-        });
-        if c.sortable {
-            let id = c.id.clone();
-            let on_sort = on_sort.clone();
-            cell = cell.focusable(true).cursor(Cursor::Pointer).hover(k.c.hover).on_press_tx(move |s: &mut S, tx: &mut Tx| {
-                let st = get_mut(s);
-                let dir = st.next_sort(&id);
-                st.set_sort(id.clone(), dir);
-                if let Some(f) = &on_sort {
-                    f(s, &id, dir, tx);
-                }
-            });
-        }
-        if c.resizable {
-            cell = cell.child(resize_handle(c.clone(), get_mut, style.rule, j == last));
-        } else if j != last {
-            cell = cell.child(el().key("rule").pin(None, Some(8.0), Some(0.0), Some(8.0)).w(1.0).fill(style.rule));
-        }
-        h = h.child(cell);
-    }
-    h
-}
-
-/// The drag target on a header cell's right edge: a hairline that widens the column as it's
-/// dragged, clamped to its bounds. A double click puts the column back.
-fn resize_handle<S: 'static>(c: TableColumn, get_mut: fn(&mut S) -> &mut TableState, rule: Color, last: bool) -> El {
-    let id = c.id.clone();
-    let reset = c.id.clone();
-    let line = el().key("line").w(1.0).h_full().fill(if last { Color::TRANSPARENT } else { rule });
-    row()
-        .key("resize")
-        .label(format!("Resize {}", c.title))
-        .pin(None, Some(6.0), Some(-4.0), Some(6.0))
-        .w(9.0)
-        .justify_center()
-        .cursor(Cursor::ResizeColumn)
-        .on_drag(move |s: &mut S, d: &mut Drag, _tx: &mut Tx| {
-            let st = get_mut(s);
-            match d.phase {
-                Phase::Down => {
-                    st.resize_start = Some(st.column_width(&id));
-                    d.data = st.column_width(&id).or_else(|| st.laid_out.get(&id).copied()).unwrap_or(c.min);
-                }
-                Phase::Move | Phase::Up => {
-                    if d.cancelled() {
-                        match st.resize_start.take().flatten() {
-                            Some(w) => st.set_column_width(id.clone(), w),
-                            None => st.reset_column_width(&id),
-                        }
-                    } else {
-                        st.set_column_width(id.clone(), c.clamp(d.data + d.dx));
-                        if d.phase == Phase::Up { st.resize_start = None; }
-                    }
-                }
-            }
-        })
-        .on_double_press(move |s: &mut S| get_mut(s).reset_column_width(&reset))
-        .child(line)
 }
 
 #[cfg(test)]
