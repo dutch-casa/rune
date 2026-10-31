@@ -118,15 +118,15 @@ impl Progress {
     }
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
-        let fraction = self.value.map(|v| v.clamp(0.0, 1.0));
-        let mut root = col().role("progressbar").w_full().gap(4.0);
+        // A non-finite value is indeterminate: `value_range` rejects NaN and would panic.
+        let fraction = self.value.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
+        let mut root = col().role("progressbar").label(self.label.clone().unwrap_or_else(|| "Progress".into())).w_full().gap(4.0);
         if let Some(v) = fraction {
             root = root.value_range(v * 100.0, 0.0..=100.0);
         }
         if self.label.is_some() || self.show_value {
             let mut header = row().key("header").gap(8.0).center_y();
             if let Some(l) = &self.label {
-                root = root.label(l.clone());
                 header = header.child(text(l.clone()).key("label").font(k.ty.text_small).color(c.std_text));
             }
             header = header.child(spacer());
@@ -171,12 +171,13 @@ impl ProgressCircle {
     }
     pub fn build(self, k: &Kit) -> El {
         let ink = k.c.icon_muted;
-        let fraction = self.value.clamp(0.0, 1.0);
-        el().role("progressbar")
-            .label("Progress")
-            .value_range(fraction * 100.0, 0.0..=100.0)
-            .size(self.size, self.size)
-            .child(icon(&RING, self.size).absolute(0.0, 0.0).color(ink).opacity(0.2))
+        let finite = self.value.is_finite();
+        let fraction = if finite { self.value.clamp(0.0, 1.0) } else { 0.0 };
+        let mut ring = el().role("progressbar").label("Progress").size(self.size, self.size);
+        if finite {
+            ring = ring.value_range(fraction * 100.0, 0.0..=100.0);
+        }
+        ring.child(icon(&RING, self.size).absolute(0.0, 0.0).color(ink).opacity(0.2))
             .child(icon(arc_icon(fraction), self.size).absolute(0.0, 0.0).color(ink))
     }
 }
@@ -185,6 +186,7 @@ impl ProgressCircle {
 fn arc_icon(v: f32) -> &'static Icon {
     use std::sync::Mutex;
     static CACHE: Mutex<Vec<Option<&'static Icon>>> = Mutex::new(Vec::new());
+    let v = if v.is_finite() { v } else { 0.0 };
     let step = (v.clamp(0.0, 1.0) * 50.0).round() as usize;
     let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if cache.len() < 51 {

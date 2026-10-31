@@ -1,0 +1,1 @@
+- **A non-finite `Progress` or `ProgressCircle` value is indeterminate.** `NaN` and infinity no longer panic, and a progress bar with no label is named "Progress".

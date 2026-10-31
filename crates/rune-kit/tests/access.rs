@@ -121,4 +121,25 @@ fn progress_exposes_its_clamped_percentage_and_spinner_keeps_its_name() {
     assert_eq!(at("circle").label.as_deref(), Some("Progress"));
     assert_eq!(at("spin").label.as_deref(), Some("Loading"));
     assert!(at("spin").range.is_none());
+    assert_eq!(at("clamped").label.as_deref(), Some("Progress"));
+}
+
+#[test]
+fn a_non_finite_progress_is_indeterminate_and_an_unnamed_bar_is_called_progress() {
+    fn view(_: &(), _: &mut Cx<()>) -> El {
+        let k = Kit::neutral(true);
+        rune::col()
+            .child(Progress::new(Some(f32::NAN)).build(&k).key("nan"))
+            .child(Progress::new(Some(f32::INFINITY)).build(&k).key("inf"))
+            .child(ProgressCircle::new(f32::NAN).build(&k).key("ring"))
+            .child(Progress::new(Some(0.4)).build(&k).key("plain"))
+    }
+    let mut rt = Runtime::new((), view, (240.0, 200.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let at = |key: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(key)).unwrap();
+    assert!(at("nan").range.is_none() && at("inf").range.is_none() && at("ring").range.is_none());
+    assert_eq!(at("nan").label.as_deref(), Some("Progress"));
+    assert_eq!(at("ring").label.as_deref(), Some("Progress"));
+    assert_eq!(at("plain").label.as_deref(), Some("Progress"));
+    assert_eq!(at("plain").range.map(|r| r.value), Some(40.0));
 }
