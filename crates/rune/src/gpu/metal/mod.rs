@@ -3,7 +3,9 @@
 //!
 //! Shaders stay WGSL: naga translates each pipeline's entry points to MSL with the pipeline
 //! layout's slots, as wgpu-hal does, minus its vertex pulling (vertex inputs use a vertex
-//! descriptor). The uber shader instead loads `uber_native.metallib`, that MSL precompiled. Buffers are `MTLStorageModeShared`; textures are private.
+//! descriptor). The uber shader instead loads `uber_native.metallib`, that MSL precompiled, and
+//! Rune's other pipelines take theirs from `builtin_native.metallib` (`builtin`). Buffers are
+//! `MTLStorageModeShared`; textures are private.
 //!
 //! A command encoder records one `MTLCommandBuffer` with unretained references: everything it
 //! uses is kept alive until the queue's `MTLSharedEvent` reaches that buffer's value. A submit
@@ -27,6 +29,7 @@
 //! (`unsupported!`).
 
 pub(crate) mod bench;
+mod builtin;
 mod compute;
 #[cfg(test)]
 mod compute_tests;
@@ -100,6 +103,9 @@ pub(crate) fn render_msl(wgsl: &str, entries: &[wgpu::BindGroupLayoutEntry], lan
         shader::translate(&ir, &point, &layout.raw.stages[s], false, lang).unwrap_or_else(|e| panic!("{e}")).source
     })
 }
+
+/// How many pipelines compiled at runtime because the precompiled library lacked them.
+pub(crate) fn builtin_misses() -> usize { builtin::misses() }
 
 /// The wgpu features this backend can offer: a compositor that wants others draws with wgpu
 /// unless the app or `RUNE_GPU_BACKEND` asked for this backend (`backend::wgpu_for`).

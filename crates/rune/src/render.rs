@@ -6,6 +6,7 @@ use crate::pixels::ImageAtlas;
 use crate::text::{ATLAS_SIZE, Atlas};
 
 mod backdrop_blur;
+mod first_use;
 pub(crate) mod layer_blur;
 mod layers;
 mod metallib;
@@ -15,6 +16,7 @@ pub(crate) mod surface_alpha;
 pub(crate) mod translucency;
 mod upload;
 pub use backdrop_blur::MAX_BACKDROP_BLURS;
+pub use first_use::precompiled_misses;
 pub use layers::LayerStats;
 
 pub const KIND_RECT: f32 = 0.0;

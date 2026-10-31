@@ -344,6 +344,67 @@ standalone `wgpu::naga` (`wgsl` → `process_overrides` → `msl`) compiles ever
   beats or matches baseline; `.metallib` freshness and pixel-equivalence tests pass across
   `rune`, `rune-fx` and `rune-light`.
 
+#### Done: every built-in pipeline precompiled (native backend, macOS and iOS)
+
+`gpu/metal/builtin.rs` looks up each pipeline's function in `builtin_native.metallib` before it
+calls naga. The key hashes everything that decides naga's MSL: the WGSL, stage, entry point,
+override constants, runtime checks, point size, and the slots *this pipeline's layout* hands out.
+So a precompiled function binds exactly what the runtime path would give it, and a table row
+carries the sized bindings and the workgroup size. A module whose WGSL is built in isn't parsed
+unless a pipeline misses the table. `scripts/precompile-metal-shaders.sh` captures the MSL
+(`RUNE_METAL_CAPTURE`) from rune-light's `builtin_shaders` test, which builds every pipeline,
+and compiles it for macOS, iOS and the iOS simulator: 60 pipelines, 53 distinct functions, each
+in its own namespace. The capture builds the uber shader from WGSL too, since iOS has no
+`uber_native.metallib`.
+The same test fails on a miss, so a shader edit without a regenerate shows up there. App shaders
+miss the table and compile at runtime as before.
+
+Measured with `shader_first_use` (`--profile perf`, fresh processes, 10 alternating rounds,
+medians, M-class MacBook Pro). Cold means `com.apple.metal` was cleared before the run:
+
+| First use | Cold, runtime MSL | Cold, precompiled | Warm, runtime | Warm, precompiled |
+|---|---|---|---|---|
+| `Renderer::new` (uber, already precompiled) | 110 ms | 114 ms | 1.2 ms | 1.3 ms |
+| backdrop blur + composite | 394 ms | 29 ms | 2.2 ms | 0.7 ms |
+| layer blur (5 specializations) | 727 ms | 45 ms | 1.6 ms | 0.2 ms |
+| video | 201 ms | 22 ms | 1.1 ms | 0.2 ms |
+| transparent window (straight alpha) | 87 ms | 5 ms | 0.2 ms | 0.1 ms |
+| `Renderer::with_springs` | 305 ms | 81 ms | 3.3 ms | 0.2 ms |
+| `FxRenderer::new` | 3,627 ms | 1,260 ms | 32.5 ms | 1.2 ms |
+| `FxRenderer::add_format` | 1,283 ms | 1,263 ms | 15.1 ms | 0.8 ms |
+| fire simulation | 1,207 ms | 101 ms | 2.0 ms | 0.2 ms |
+| `LightRenderer::new` | 1,389 ms | 127 ms | 5.7 ms | 0.6 ms |
+| `GlassRenderer::new` | 392 ms | 126 ms | 6.0 ms | 4.0 ms |
+
+Most of a cold pipeline is Metal's front end (MSL to AIR). Clearing only Metal's library cache
+cost a first layer blur 555 ms, and clearing only its function cache cost 45 ms. What remains is
+GPU code generation, which the precompiled library can't skip. That's why `add_format`, the same
+fx functions for another format, stays at 1.26 s cold. 1,669 readbacks across the rune, rune-fx
+and rune-light tests were byte-identical with the library on and off. `settings` first pixels
+didn't change (it builds only the uber pipeline).
+
+Cost: 539 KB in the binary (`settings` stripped: 17.37 → 17.90 MB). The library compresses to
+235 KB with deflate, which macOS's Compression framework could decode in about a millisecond.
+That's left for later. naga stays in every binary: its WGSL front end, validator and MSL back end
+are about 1.3 MB of `settings`' 11.2 MB of code, and both wgpu's backend in the same binary and
+app shaders need them. The wgpu backend doesn't use the library.
+
+On the iOS 27 simulator (same Mac, 6 alternating rounds for `shader_first_use`, 8 for
+`embed_cost`, medians; cold clears the simulator's and the host's `com.apple.metal`), the
+precompiled library also covers the uber shader, which compiled at runtime there before:
+
+| First use, iOS simulator | Cold, runtime MSL | Cold, precompiled | Warm, runtime | Warm, precompiled |
+|---|---|---|---|---|
+| `embed_cost` first frame | 430 ms | 243 ms | 35.0 ms | 31.6 ms |
+| `Renderer::new` (uber) | 390 ms | 194 ms | 5.9 ms | 2.6 ms |
+| layer blur | 723 ms | 10 ms | 3.4 ms | 1.3 ms |
+| `FxRenderer::new` | 2,098 ms | 85 ms | 40.7 ms | 5.2 ms |
+| `LightRenderer::new` | 1,254 ms | 27 ms | 9.5 ms | 1.9 ms |
+| every built-in pipeline | 6,631 ms | 440 ms | 102 ms | 18 ms |
+
+The device library (`builtin_native_ios.metallib`) compiles from the same MSL but hasn't run on
+a phone yet.
+
 #### Considered, not done: `MTLBinaryArchive`
 
 Measured on the native backend after step 4, on an M2-class Mac, with fresh processes and medians

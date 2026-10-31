@@ -5,7 +5,7 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 
-use objc2_metal::{MTLCommandQueue, MTLDevice, MTLLanguageVersion, MTLSharedEvent};
+use objc2_metal::{MTLCommandQueue, MTLDevice, MTLLanguageVersion, MTLLibrary, MTLSharedEvent};
 use parking_lot::Mutex;
 use wgpu::custom::*;
 
@@ -35,6 +35,8 @@ pub(crate) struct Shared {
     pub(super) recording: AtomicUsize,
     /// What new textures are zeroed from, made with the first.
     pub(super) zeros: OnceLock<Zeros>,
+    /// Rune's precompiled pipelines, loaded with the first pipeline that looks one up.
+    pub(super) builtin: OnceLock<Option<Obj<dyn MTLLibrary>>>,
 }
 send_sync!(Shared);
 
@@ -56,6 +58,7 @@ pub(super) fn new(device: Obj<dyn MTLDevice>, desc: &wgpu::DeviceDescriptor<'_>)
         textures: Arc::default(),
         recording: AtomicUsize::new(0),
         zeros: OnceLock::new(),
+        builtin: OnceLock::new(),
         device,
     });
     let device = MetalDevice { shared: shared.clone(), features: desc.required_features, limits: desc.required_limits.clone() };
