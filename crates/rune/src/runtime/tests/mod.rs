@@ -27,6 +27,7 @@ mod scroll_spring;
 mod secure_text;
 mod shimmer;
 mod springs;
+mod text_glide;
 mod text_keys;
 mod text_rebreak;
 mod unseen_entrances;

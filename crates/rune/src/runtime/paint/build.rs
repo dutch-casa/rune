@@ -383,6 +383,7 @@ impl<S: 'static> Runtime<S> {
             let snap_layer = if can_snap && (own_sc - 1.0).abs() > 1e-5 { self.pixel_snap.layer(n.id, (r_exact, raw_edges.map(snap_px)), rigid, pinh.in_cache || n.vis.cache) } else { pinh.snap.layer };
             let animating = p.flags & (rune_motion::flags::ANIMATED | rune_motion::flags::ANCESTOR_ANIMATED) != 0;
             let rest = if snaps && animating { self.scene.rest(n.id) } else { None };
+            let gliding = snaps && (rest.is_some() || !unscaled);
             let (r, snap_rest) = if !snaps {
                 (r_exact, None)
             } else if rest.is_none() && unscaled {
@@ -1135,6 +1136,8 @@ impl<S: 'static> Runtime<S> {
                     let ins = n.inset.map(|v| v * zk * s);
                     let (x0, x1) = (zr[0] + ins[0], zr[2] - ins[2]);
                     let mut origin = [text_x(spec, x0, x1, (layout.full_width() * tk).ceil()), zr[1] + ins[1]];
+                    // A gliding box's glyphs lay out from its nearest whole pixel and move the rest.
+                    let glide = if gliding && cover.is_none() && scale_motion == ScaleMotion::Still { pixel_snap::text_glide(r[1]) } else { 0.0 };
                     let mut clip = clip;
                     if let Some(inp) = n.input.as_ref().filter(|i| i.single_line) {
                         let scroll = single_line_scroll(&mut self.input_scroll, &n.path, inp, &spec.content, layout, s, (x1 - x0) / tk.max(1e-4)) * tk;
@@ -1172,12 +1175,14 @@ impl<S: 'static> Runtime<S> {
                             && f.alphas(f.destination, now, self.reduced_motion).0 > 0.0);
                         if e.text.is_empty() && e.preedit.is_none() && !inp.placeholder.is_empty() && !departing {
                             let pl_indent = spec.blocks.first().map_or(0.0, |b| (b.indent_pt(spec.style.size) * s).round() * tk);
-                            let pl_origin = [origin[0] + pl_indent, origin[1]];
+                            let pl_origin = [origin[0] + pl_indent, origin[1] - glide];
                             let pl_r_origin = if scale_motion == ScaleMotion::Still { pl_origin } else { [0.0, 0.0] };
                             let pl = self.text.layout_rich(&inp.placeholder, &[], spec.style, s, Some((w - pl_indent).max(1.0) / tk.max(1e-4)));
                             self.glyph_scratch.clear();
                             self.text.set_glyph_inks(inp.placeholder_color, &[]);
+                            self.text.set_glide(glide);
                             self.text.glyphs_for_layout_scaled(&pl, pl_r_origin, raster, false, &mut self.glyph_scratch);
+                            self.text.set_glide(0.0);
                             let pc = premul(inp.placeholder_color, o, srgb);
                             for q in &self.glyph_scratch {
                                 self.instances.extend(glyph_or_image(q, &self.text, &mut self.images, pc, clip, fade)
@@ -1270,6 +1275,8 @@ impl<S: 'static> Runtime<S> {
                     }
                     self.glyph_scratch.clear();
                     self.text.set_glyph_inks(color, &spec.spans);
+                    let origin = [origin[0], origin[1] - glide];
+                    self.text.set_glide(glide);
                     let r_origin = if scale_motion == ScaleMotion::Still { origin } else { [0.0, 0.0] };
                     let has_hl_fg = spec.highlights.iter().any(|h| h.fg.is_some());
                     // A cell of a longer run draws its slice of the run's glyphs, shaped in context.
@@ -1297,6 +1304,7 @@ impl<S: 'static> Runtime<S> {
                         }
                         tk / raster
                     };
+                    self.text.set_glide(0.0);
                     let base = premul(color, o, srgb);
                     let lands = self.flights.iter().any(|f| f.lands(&n.path, n.key.as_deref()));
                     for q in if lands { &[][..] } else { &self.glyph_scratch[..] } {

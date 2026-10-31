@@ -91,6 +91,8 @@ use decorations::Decoration;
 use atlas::{AtlasGlyph, COLOR_GLYPH_BUDGET, ColorGlyph, GlyphKey, GlyphMap, Rasterized};
 #[cfg(test)]
 use atlas::{MAX_OVERFLOW_PAGES, MAX_STEADY_PAGES};
+#[cfg(test)]
+pub(crate) use glyph_emit::GLIDE_PHASES;
 use line_break::break_lines_with_blocks;
 use span::PILL_BOX;
 use system_fonts::{
@@ -173,6 +175,8 @@ pub struct TextSystem {
     /// CoreGraphics' glyph pipeline for `smoothing`, and its per-ink state.
     apple: macos::smoothing::Smoothing,
     pub(crate) glyph_cache: glyph_cache::GlyphCache,
+    /// Device px the next glyphs move down ([`Self::set_glide`]).
+    glide: f32,
 }
 
 impl Default for TextSystem {
@@ -292,6 +296,7 @@ impl TextSystem {
             primary_axes: HashMap::new(),
             apple: Default::default(),
             glyph_cache: Default::default(),
+            glide: 0.0,
         }
     }
 
