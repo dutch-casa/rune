@@ -248,7 +248,7 @@ mod size_tests;
 #[cfg(any(test, target_arch = "wasm32"))]
 #[path = "runtime/web/runtime.rs"]
 pub(crate) mod web_runtime;
-#[path = "runtime/web/a11y.rs"]
+#[path = "runtime/web/a11y/mod.rs"]
 pub(crate) mod web_a11y;
 
 #[path = "runtime/commit/text_layout.rs"]
