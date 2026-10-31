@@ -222,10 +222,12 @@ Focused virtual editors retain their native element across unmounts. Browsers wi
 `Element.moveBefore` keep a composing field where it is until the composition ends, then
 apply the structural update.
 
-The shell's **Text view** button displays the same semantic DOM in normal text flow and hides
-the canvas. Reaching either edge mounts a further page of a virtual list. It keeps the native editor, draft, selection and application handlers. Browser
-zoom, user fonts, text spacing and foreground/background overrides can then apply to real
-text. The button remains outside the reconciled scene and returns to canvas rendering.
+The shell's **Text view** button follows the page's controls in tab order. It displays the
+same semantic DOM in normal text flow and hides the canvas. Reaching either edge mounts a
+further page of a virtual list. An embedded canvas starts below the button. It keeps the
+native editor, draft, selection and application handlers. Browser zoom, user fonts, text
+spacing and foreground/background overrides can then apply to real text. The button remains
+outside the reconciled scene and returns to canvas rendering.
 This is an alternate presentation, not another UI tree or application state model.
 
 `Runtime::a11y_json()` retains its JSON array contract with optional control and editor fields.

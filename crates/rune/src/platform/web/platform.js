@@ -91,13 +91,39 @@ export function viewport(canvas, callback, embedded) {
     probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
     document.body.append(probe);
     let inset = 0;
+    // Set once the canvas was filling its parent, so a later clear restores 100% and a
+    // content height in pixels (fit_content_height) is never rewritten.
+    let managedFill = false;
     const update = () => {
+        const v = window.visualViewport;
         if (!embedded) {
-            const v = window.visualViewport;
             canvas.style.inlineSize = `${v?.width ?? innerWidth}px`;
             canvas.style.blockSize = `${Math.max(0, (v?.height ?? innerHeight) - inset)}px`;
             canvas.style.insetInlineStart = `${v?.offsetLeft ?? 0}px`;
             canvas.style.insetBlockStart = `${(v?.offsetTop ?? 0) + inset}px`;
+        } else {
+            // The text-view button is out of flow at the top of the embed. The canvas
+            // starts below it. A block margin collapses through a parent with no padding,
+            // so the canvas is inline-block while the inset is set. A height of 100% shrinks
+            // by the inset; a content height in pixels (fit_content_height) stays.
+            const height = canvas.style.height;
+            if (inset) {
+                canvas.style.display = 'inline-block';
+                canvas.style.verticalAlign = 'top';
+                canvas.style.marginTop = `${inset}px`;
+                if (height === '100%' || managedFill) {
+                    canvas.style.height = `calc(100% - ${inset}px)`;
+                    managedFill = true;
+                }
+            } else {
+                canvas.style.marginTop = '';
+                canvas.style.verticalAlign = '';
+                if (canvas.style.display === 'inline-block') canvas.style.display = 'block';
+                if (managedFill) {
+                    canvas.style.height = '100%';
+                    managedFill = false;
+                }
+            }
         }
         const s = getComputedStyle(probe);
         const insets = embedded ? [0, 0, 0, 0] : [s.paddingTop, s.paddingRight, s.paddingBottom, s.paddingLeft].map(parseFloat);

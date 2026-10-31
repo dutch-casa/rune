@@ -85,7 +85,10 @@ const css = `
   touch-action: manipulation;
 }
 [data-rune-text-toggle][data-rune-embedded] {
-  position: relative;
+  position: absolute;
+  z-index: 2;
+  inset-block-start: 0;
+  inset-inline-start: 0;
   padding-block-start: 0.2rem;
   padding-inline-start: 0.55rem;
 }
@@ -257,7 +260,7 @@ function toggle(h) {
 
 function trackViewport(h) {
     if (h.disposed || !h.textView) return;
-    if (h.textView.fixed) setViewportInset(h.canvas, h.textView.control.offsetHeight);
+    setViewportInset(h.canvas, h.textView.control.offsetHeight);
     placeControl(h);
     if (showing(h)) reserve(h);
 }
@@ -300,7 +303,8 @@ export function attach(h) {
     if (h.embedded) control.dataset.runeEmbedded = '';
     const canvasVisibility = h.canvas.style.visibility;
     h.a11y.setAttribute('data-rune-text-view', 'off');
-    h.canvas.before(control);
+    // After the mirror, so the page's controls are the earlier tab stops.
+    h.a11y.after(control);
     h.textView = { on: false, control, rootCss: h.a11y.style.cssText, canvasVisibility, fixed: !h.embedded, deferred: false, pageMarker: null };
     h.textView.resize = new ResizeObserver(() => trackViewport(h));
     h.textView.resize.observe(control);
@@ -342,7 +346,7 @@ export function detach(h) {
     if (!view) return;
     view.resize.disconnect();
     h.canvas.style.visibility = view.canvasVisibility;
-    if (view.fixed) setViewportInset(h.canvas, 0);
+    setViewportInset(h.canvas, 0);
     h.textView = null;
     view.control.remove();
     h.a11y?.removeAttribute('data-rune-text-view');

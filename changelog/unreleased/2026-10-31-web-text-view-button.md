@@ -1,0 +1,1 @@
+- The text view button follows the page's controls in tab order, and an embedded canvas starts below the button.

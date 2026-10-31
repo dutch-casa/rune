@@ -117,10 +117,15 @@ export async function accessibilityProof(page, url, axNode) {
     assert.equal(await cursor.getAttribute('aria-level'), '2');
     assert.equal(await cursor.getAttribute('aria-selected'), 'true');
     await open('sidebar');
-    await page.getByRole('button', { name: 'Text view', exact: true }).focus();
+    await page.locator('[data-rune-a11y]').focus();
     await page.keyboard.press('Tab');
     const headerToggle = page.getByRole('button', { name: 'Today', exact: true });
     assert.equal(await headerToggle.evaluate(element => element === document.activeElement), true);
+    assert.equal(await page.evaluate(() => {
+        const button = document.querySelector('[data-rune-text-toggle]');
+        const today = document.activeElement;
+        return !!(button && today && (today.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING));
+    }), true, 'the text view button follows the page controls');
     await attribute(headerToggle, 'aria-expanded', 'true');
     await page.keyboard.press('ArrowLeft');
     await attribute(headerToggle, 'aria-expanded', 'false');
