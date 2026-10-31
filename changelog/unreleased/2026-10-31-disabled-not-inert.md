@@ -1,0 +1,1 @@
+- The inspector reports a disabled element as disabled. It reports inert for an `El::inert` subtree, content behind a modal, or an element that is leaving.

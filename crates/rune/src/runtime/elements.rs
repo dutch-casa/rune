@@ -11,6 +11,9 @@ pub struct ElementInfo {
     pub focusable: bool,
     pub focused: bool,
     pub focus_visible: bool,
+    /// Outside the accessibility tree: an [`El::inert`] subtree, content behind the active
+    /// modal, or an element playing its exit. Disabled content stays in the tree; see
+    /// [`Self::disabled`].
     pub inert: bool,
     /// Playing its exit transition, or inside an element that is. Lookups by key treat it
     /// as gone; it stays listed so tools can watch the exit.
@@ -266,7 +269,7 @@ impl<S: 'static> Runtime<S> {
                     focusable: self.can_focus(i),
                     focused: self.focused.as_deref() == Some(&n.path),
                     focus_visible: self.keyboard_focus && self.focused.as_deref() == Some(&n.path),
-                    inert: !self.accepts_input(i) || exiting,
+                    inert: !self.in_scope(i) || exiting,
                     exiting,
                     path: n.path.clone(),
                     key: n.key.clone(),

@@ -43,6 +43,27 @@ fn tab(rt: &mut Runtime<S>) {
 }
 
 #[test]
+fn a_disabled_control_is_not_reported_inert_and_a_click_reaches_what_is_behind() {
+    #[derive(Default)]
+    struct S { log: Vec<&'static str> }
+    fn view(_: &S, _: &mut Cx<S>) -> El {
+        el().key("canvas").size(200.0, 200.0)
+            .on_press(|s: &mut S| s.log.push("canvas"))
+            .child(el().key("button").size(40.0, 40.0).fill(Color::BLACK).focusable(true)
+                .disabled(true)
+                .on_press(|s: &mut S| s.log.push("button")))
+    }
+    let mut rt = Runtime::new(S::default(), view, (200.0, 200.0), Env::default());
+    rt.frame(0.0);
+    let button = info(&rt, "button");
+    assert!(button.disabled);
+    assert!(!button.inert, "disabled stays in the accessibility tree");
+    assert!(!button.focusable);
+    click(&mut rt, (20.0, 20.0));
+    assert_eq!(rt.state.log, ["canvas"]);
+}
+
+#[test]
 fn presses_hovers_and_cursors_fall_through_to_what_is_under() {
     let mut rt = runtime(false);
     click(&mut rt, (20.0, 20.0));
