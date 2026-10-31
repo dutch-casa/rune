@@ -1,0 +1,1 @@
+- On web, panning a pinch zoom keeps accessibility targets on the controls they name.

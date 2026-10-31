@@ -208,6 +208,14 @@ export function mount(canvas, callback, embedded, fitHeight) {
     };
     h.placeBounds = () => applyBounds(h);
     h.refreshEntries = () => refreshEntries(h);
+    // Pinch-zoom pans the canvas through visualViewport. Geometry in Rust is unchanged, so
+    // the mirror's hit rectangles are placed again from the canvas's new box.
+    const placeAfterViewport = () => { if (!h.disposed && !textView.showing(h)) h.placeBounds(); };
+    if (window.visualViewport) {
+        h.listen(window.visualViewport, 'scroll', placeAfterViewport);
+        h.listen(window.visualViewport, 'resize', placeAfterViewport);
+    }
+    h.listen(window, 'resize', placeAfterViewport);
     textView.attach(h);
     return h;
 }
