@@ -1,0 +1,1 @@
+- **A pane splitter speaks its width.** The grip's value is announced in points, for example "320 points". A non-finite width is brought into range before it is published.

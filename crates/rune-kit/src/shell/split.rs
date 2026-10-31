@@ -135,8 +135,9 @@ impl Default for SidebarToggle {
 /// (double-click resets the width, dragging below half the minimum collapses). The shell
 /// places a width button in the sidebar's title band, and in a chrome row above the
 /// inspector's content, for narrow, widen, and reset; a secondary click on the edge opens
-/// the same menu. Panes open and close together on one spring ([`PaneMotion`]). Under Reduce Motion they snap. Widths and
-/// open states live in the app's [`PaneState`]s. With [`SidebarPeek`], a closed sidebar slides
+/// the same menu. Panes open and close together on one spring ([`PaneMotion`]).
+/// Under Reduce Motion they snap. Widths and open states live in the app's
+/// [`PaneState`]s. With [`SidebarPeek`], a closed sidebar slides
 /// in over the content while the pointer rests at the window's edge.
 ///
 /// The band's middle is 24 points down: place the traffic lights there with
@@ -738,9 +739,11 @@ fn dock(d: &Dock, key: &str, p: Pane, leading: bool, content: Contents) -> El {
             .transition(Transition::none());
         let min = s.min_width();
         let max = s.max_width();
+        let min = if min.is_finite() { min } else { PaneState::MIN };
+        let max = if max.is_finite() { max.max(min) } else { min.max(PaneState::MAX) };
         let width = s.width();
-        let value = if width.is_finite() { width.round().clamp(min, max) } else { width };
-        grip = grip.value_range(value, min..=max).orientation(rune::Orientation::Vertical).controls(key);
+        let value = if width.is_finite() { width.round().clamp(min, max) } else { min };
+        grip = grip.value_range(value, min..=max).value_text(format!("{value:.0} points")).orientation(rune::Orientation::Vertical).controls(key);
         grip = if leading { grip.pin(None, Some(0.0), Some(0.0), Some(0.0)) } else { grip.pin(Some(0.0), Some(0.0), None, Some(0.0)) };
         if floating {
             grip = grip.raise();
