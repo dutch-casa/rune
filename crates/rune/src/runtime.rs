@@ -524,6 +524,9 @@ pub struct Runtime<S: 'static> {
     full_keyboard_access: bool,
     /// `App::tab_visits_controls`: Tab visits every control whatever `full_keyboard_access` says.
     tab_visits_controls: bool,
+    /// A focused combobox takes Return. The web shell sets this; other hosts leave Return
+    /// with the window's default button.
+    combobox_takes_return: bool,
     modal_stack: Vec<(String, Option<focus::FocusTarget>)>,
     /// Focus when the running commit began, before a new view's focus request applied: what a
     /// modal that opens in this commit returns focus to.
@@ -882,6 +885,7 @@ impl<S: 'static> Runtime<S> {
             modifier_keys: Default::default(),
             full_keyboard_access: true,
             tab_visits_controls: false,
+            combobox_takes_return: false,
             modal_stack: Vec::new(),
             focus_before_commit: None,
             last_focused: None,

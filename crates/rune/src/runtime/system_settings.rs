@@ -45,6 +45,11 @@ impl<S: 'static> Runtime<S> {
     pub fn set_tab_visits_controls(&mut self, on: bool) {
         self.tab_visits_controls = on;
     }
+    /// A focused combobox takes Return, as a browser does. Off, Return stays with the window's
+    /// default button, as AppKit does. The web shell turns this on; other hosts leave it off.
+    pub(crate) fn set_combobox_takes_return(&mut self, on: bool) {
+        self.combobox_takes_return = on;
+    }
     pub fn set_system_reduced_motion(&mut self, reduced: bool) {
         if self.system_reduced_motion != reduced {
             self.system_reduced_motion = reduced;

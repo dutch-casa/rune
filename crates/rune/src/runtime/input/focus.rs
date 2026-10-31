@@ -102,11 +102,12 @@ impl<S: 'static> Runtime<S> {
         }
         self.accepts_input(i) && !self.subtree_exiting(i) && n.vis.opacity > 0.0 && n.local.w > 0.0 && n.local.h > 0.0
     }
-    /// Return takes a focused link or row. Browser comboboxes also take Return;
-    /// desktop buttons retain the window's default-button behavior.
+    /// Return activates a focused link or a row in a list, menu or grid. A combobox takes
+    /// Return when `set_combobox_takes_return` is on; otherwise Return stays with the
+    /// window's default button.
     fn takes_return(&self, i: usize) -> bool {
         self.link_focused(i) || self.nodes[i].focus.highlight.is_some()
-            || (cfg!(target_arch = "wasm32") && self.nodes[i].role == "combobox")
+            || (self.combobox_takes_return && self.nodes[i].role == "combobox")
             || self.group(i).is_some_and(|g| LIST_ROLES.contains(&self.nodes[g].role) || VERTICAL_ROLES.contains(&self.nodes[g].role))
     }
     /// Return with no modifiers presses the window's default button (`El::default_button`)
@@ -444,7 +445,7 @@ impl<S: 'static> Runtime<S> {
             if let Some(f) = self.nodes[i].handlers.on_press.clone() { f(states!(self), tx); }
             return true;
         }
-        // Space presses the focused control. Return follows the host's focused-control policy.
+        // Space presses the focused control. Return presses it when `takes_return` says so.
         let space = ev.key == Key::Text(" ".into());
         if self.nodes[i].input.is_none() && (space || (ev.key == Key::Enter && self.takes_return(i))) {
             // A row the user cannot see highlighted (the pointer left it) chooses nothing.
@@ -1118,6 +1119,30 @@ mod tests {
         press(&mut rt, Key::Enter);
         assert_eq!(log(&mut rt), ["done"], "a modal's default button, not the one behind it");
         assert!(!rt.state.sheet);
+    }
+
+    #[test]
+    fn a_focused_combobox_takes_return_only_when_the_host_says_so() {
+        struct Form { presses: Vec<&'static str> }
+        fn view(_: &Form, _: &mut Cx<Form>) -> El {
+            col().size(240.0, 80.0)
+                .child(button("go").default_button().on_press(|s: &mut Form| s.presses.push("go")))
+                .child(el().key("box").role("combobox").size(80.0, 24.0).focusable(true)
+                    .on_press(|s: &mut Form| s.presses.push("box")))
+        }
+        for takes in [false, true] {
+            let mut rt = Runtime::new(Form { presses: Vec::new() }, view, (240.0, 80.0), Env::new(true, 1.0));
+            rt.set_tab_visits_controls(true);
+            rt.set_combobox_takes_return(takes);
+            rt.frame(0.0);
+            press(&mut rt, Key::Tab);
+            assert_eq!(focused(&rt), "go");
+            press(&mut rt, Key::Tab);
+            assert_eq!(focused(&rt), "box");
+            press(&mut rt, Key::Enter);
+            let want = if takes { "box" } else { "go" };
+            assert_eq!(rt.state.presses, [want]);
+        }
     }
 
     #[test]

@@ -319,6 +319,7 @@ impl<S: 'static> ApplicationHandler<Wake> for Browser<S> {
             rt.on_focus = on_focus;
             rt.set_modifier_keys(modifier_keys);
             rt.set_tab_visits_controls(tab_visits_controls);
+            rt.set_combobox_takes_return(true);
             rt.set_srgb_blend(srgb_blend);
             rt.set_font_smoothing(font_smoothing);
             rt.set_os_drag(false);
