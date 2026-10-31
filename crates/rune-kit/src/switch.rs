@@ -16,6 +16,7 @@ pub struct Switch {
 }
 
 impl Switch {
+    /// A switch. Without [`Self::label`] it has no accessible name.
     pub fn new(checked: bool) -> Switch {
         Switch {
             label: None,

@@ -182,6 +182,13 @@ fn format_shortcut(s: &str) -> String {
     }
 }
 
+/// A readable name from an icon id: `kit-check-small` becomes "check small".
+fn icon_accessible_name(name: &str) -> String {
+    let bare = name.strip_prefix("kit-").unwrap_or(name).replace('-', " ");
+    let bare = bare.trim();
+    if bare.is_empty() { "Icon".into() } else { bare.to_owned() }
+}
+
 fn compose_help(help: Option<&str>, label: Option<&str>, shortcut: Option<&str>) -> Option<String> {
     let sc = shortcut.map(format_shortcut).filter(|s| !s.is_empty());
     match (help, label, sc) {
@@ -371,7 +378,9 @@ pub enum IconButtonVariant {
     GhostMuted,
 }
 
-/// A square icon-only button: `IconButton::new(&icons::PLUS).build(&kit)`.
+/// A square icon-only button: `IconButton::new(&icons::PLUS).label("Add").build(&kit)`.
+///
+/// Without a label or tooltip, the accessible name is the icon's name.
 pub struct IconButton {
     icon: &'static Icon,
     variant: IconButtonVariant,
@@ -495,12 +504,12 @@ impl IconButton {
         let disabled_alpha = s.disabled_opacity;
         let enabled = self.state != State::Disabled;
         let tip = compose_help(self.help.as_deref(), self.label.as_deref(), self.shortcut.as_deref());
-        let mut e = row().role("button").size(side, side).center().radius(radius);
+        let name = self.label.clone().filter(|s| !s.is_empty())
+            .or_else(|| self.help.clone().filter(|s| !s.is_empty()))
+            .unwrap_or_else(|| icon_accessible_name(self.icon.name));
+        let mut e = row().role("button").label(name).size(side, side).center().radius(radius);
         if let Some(expanded) = self.expanded {
             e = e.expanded(expanded);
-        }
-        if let Some(l) = self.label.or(self.help) {
-            e = e.label(l);
         }
         if let Some(t) = tip {
             e = e.help(t);

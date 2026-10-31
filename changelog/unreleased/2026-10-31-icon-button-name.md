@@ -1,0 +1,1 @@
+- **An icon button without a label takes its icon's name.** `kit-lock` is announced as "lock", so the mirror keeps the button. Set `label` when that name is not the action.

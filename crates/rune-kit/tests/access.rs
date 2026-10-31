@@ -93,6 +93,19 @@ fn a_menu_item_exposes_its_shortcut() {
 }
 
 #[test]
+fn an_unlabelled_icon_button_takes_its_icon_name() {
+    fn view(_: &(), _: &mut Cx<()>) -> El {
+        let k = Kit::neutral(true);
+        rune_kit::IconButton::new(k.glyph.lock).build(&k).key("lock")
+    }
+    let mut rt = Runtime::new((), view, (80.0, 80.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let button = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("lock")).unwrap();
+    assert_eq!(button.label.as_deref(), Some("lock"));
+    assert!(button.help.is_none());
+}
+
+#[test]
 fn a_toast_announces_its_description_and_its_close_is_a_key() {
     struct S { open: bool }
     fn view(s: &S, _: &mut Cx<S>) -> El {

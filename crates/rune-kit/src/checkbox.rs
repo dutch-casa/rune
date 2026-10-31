@@ -16,6 +16,7 @@ pub struct Checkbox {
 }
 
 impl Checkbox {
+    /// A checkbox. Without [`Self::label`] it has no accessible name.
     pub fn new(checked: bool) -> Checkbox {
         Checkbox {
             label: None,
