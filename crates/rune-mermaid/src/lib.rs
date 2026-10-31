@@ -105,6 +105,7 @@ mod flowchart;
 mod gantt;
 mod git;
 mod hover;
+mod ink;
 mod journey;
 mod layered;
 mod layered_draw;
@@ -179,9 +180,9 @@ impl DiagramStyle {
             surface: t.bg,
             surface_border: t.separator,
             node_fill: t.card,
-            node_border: t.text.alpha(0.32),
-            line: t.text.alpha(0.55),
-            cluster_fill: t.text.alpha(0.04),
+            node_border: t.text.alpha(0.2),
+            line: t.text.alpha(0.42),
+            cluster_fill: t.text.alpha(if dark { 0.04 } else { 0.025 }),
             note_fill: oklcha(if dark { 0.3 } else { 0.95 }, 0.04, 80.0, 1.0),
             note_border: oklch(if dark { 0.4 } else { 0.85 }, 0.08, 80.0),
             font: TextStyle::new(13.0, 400.0).lh(18.0),

@@ -2,7 +2,7 @@
 
 use rune::{Align, Color, TextStyle};
 
-use super::canvas::{Canvas, Measured, Scene, arrowhead, ellipse, measure, over_color, rounded_rect};
+use super::canvas::{Canvas, Measured, Scene, arrowhead, ellipse, measure, rounded_rect};
 use super::sequence::{Event, Kind, NotePos, Sequence, Tip};
 use super::shape::{self, NodeShape};
 use super::{DiagramStyle, adapt_fill};
@@ -113,7 +113,7 @@ pub(crate) fn draw(s: &Sequence, paint: &DiagramStyle) -> Option<Scene> {
                 let line_y;
                 if m.from == m.to {
                     let x = edge_x(&active, m.from, true);
-                    front.label_at(t, [x + 8.0, y], small, paint.text, Align::Start);
+                    front.label_at(t, [x + 8.0, y], small, paint.muted, Align::Start);
                     line_y = y + t.size[1] + 6.0;
                     let pts = vec![[x, line_y], [x + 30.0, line_y], [x + 30.0, line_y + 18.0], [x + 2.0 + tip_len(m.tip), line_y + 18.0]];
                     stroke(&mut front, pts, m.dotted, paint);
@@ -127,7 +127,7 @@ pub(crate) fn draw(s: &Sequence, paint: &DiagramStyle) -> Option<Scene> {
                     let dir = if right { 1.0 } else { -1.0 };
                     let mid = (sx + ex) / 2.0;
                     let has_text = !t.text.is_empty();
-                    front.label(t, [mid, y + t.size[1] / 2.0], small, paint.text, Align::Center);
+                    front.label(t, [mid, y + t.size[1] / 2.0], small, paint.muted, Align::Center);
                     line_y = y + if has_text { t.size[1] + 6.0 } else { 4.0 };
                     let a = if m.both { sx + dir * tip_len(m.tip) } else { sx };
                     stroke(&mut front, vec![[a, line_y], [ex - dir * tip_len(m.tip), line_y]], m.dotted, paint);
@@ -242,7 +242,7 @@ pub(crate) fn draw(s: &Sequence, paint: &DiagramStyle) -> Option<Scene> {
     }
 
     // Participant `box` columns behind everything else.
-    let box_border = over_color(paint.node_border.alpha(0.45), paint.surface_border);
+    let box_border = crate::canvas::group_border(paint);
     for (b_idx, b) in s.boxes.iter().enumerate() {
         let members: Vec<usize> = (0..n).filter(|&i| s.participants[i].group == Some(b_idx)).collect();
         let (Some(&first), Some(&last)) = (members.first(), members.last()) else { continue };

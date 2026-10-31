@@ -75,6 +75,12 @@ pub(crate) fn over_color(top: Color, bottom: Color) -> Color {
     Color { r: m(top.r, bottom.r), g: m(top.g, bottom.g), b: m(top.b, bottom.b), a }
 }
 
+/// The outline of a group (a subgraph, a block group, a participant box): the nodes' outline,
+/// quieter, so a group reads as a region behind its nodes rather than another node.
+pub(crate) fn group_border(paint: &crate::DiagramStyle) -> Color {
+    paint.node_border.alpha(paint.node_border.a * 0.7)
+}
+
 #[derive(Clone)]
 pub(crate) enum Op {
     Fill(Vec<[f32; 2]>, Color),
@@ -213,13 +219,14 @@ impl Canvas {
 
     pub(crate) fn finish_fit(self, paint: &DiagramStyle) -> Option<Scene> {
         let scale = fit(self.width(), paint);
-        self.finish(scale)
+        self.finish(scale, paint)
     }
 
-    pub(crate) fn finish(self, scale: f32) -> Option<Scene> {
+    pub(crate) fn finish(mut self, scale: f32, paint: &DiagramStyle) -> Option<Scene> {
         if self.ops.is_empty() && self.labels.is_empty() {
             return None;
         }
+        crate::ink::flatten(&mut self.ops, &mut self.traces, paint.surface);
         let b = self.bounds();
         let pad = 1.0;
         let map = |p: [f32; 2]| [(p[0] - b[0]) * scale + pad, (p[1] - b[1]) * scale + pad];
@@ -243,7 +250,16 @@ impl Canvas {
             .collect();
         let size = [(b[2] - b[0]) * scale + 2.0 * pad, (b[3] - b[1]) * scale + 2.0 * pad];
         let lit = self.hover.map_or(Color::TRANSPARENT, |h| h.1);
-        Some(Scene { title: None, size, shape, labels, hovers, lit })
+        Some(Scene {
+            title: None,
+            size,
+            shape,
+            labels,
+            hovers,
+            lit,
+            #[cfg(test)]
+            ops: self.ops,
+        })
     }
 }
 
@@ -257,6 +273,9 @@ pub(crate) struct Scene {
     pub(crate) hovers: Vec<Spot>,
     /// The hover colour.
     lit: Color,
+    /// What `shape` draws, in the diagram's own points.
+    #[cfg(test)]
+    pub(crate) ops: Vec<Op>,
 }
 
 impl Scene {

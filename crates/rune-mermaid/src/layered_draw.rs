@@ -4,7 +4,7 @@
 use rune::{Align, Color, TextStyle};
 
 use super::canvas::{Canvas, Measured, Scene, ellipse, measure, measure_balanced, measure_wrap, over_color, room, rounded_rect};
-use super::chart::{bold, small};
+use super::chart::small;
 use super::connector::{self, label_box, title_box};
 use super::layered::{GCluster, GEdge, Graph, Spacing, layout};
 use super::route::Ctx;
@@ -186,7 +186,7 @@ pub(crate) fn layered_canvas(
 ) -> Option<Canvas> {
     let edge_font = small(paint);
     let labels: Vec<Option<Measured>> = edges.iter().map(|e| e.label.as_ref().map(|l| measure_balanced(l, edge_font))).collect();
-    let title_font = bold(edge_font);
+    let title_font = TextStyle { weight: 500.0, ..edge_font };
     let titles: Vec<Measured> = clusters.iter().map(|c| measure(&c.title, title_font)).collect();
     let fonts = Fonts { edge: edge_font, title: title_font };
     let parts = Parts { nodes, edges, clusters, labels: &labels, titles: &titles };
@@ -263,7 +263,7 @@ fn draw_in(dir: Dir, p: &Parts, fonts: Fonts, spacing: &Spacing, paint: &Diagram
         v.reverse();
         v
     };
-    let cluster_border = over_color(paint.node_border.alpha(0.45), paint.surface_border);
+    let cluster_border = crate::canvas::group_border(paint);
     let mut title_boxes = Vec::new();
     let mut order: Vec<usize> = (0..clusters.len()).collect();
     order.sort_by_key(|&i| chain_of(Some(i)).len());

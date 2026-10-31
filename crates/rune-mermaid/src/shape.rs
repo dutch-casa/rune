@@ -415,6 +415,11 @@ pub(crate) fn outline(shape: NodeShape, c: [f32; 2], s: [f32; 2]) -> Vec<[f32; 2
 
 /// Draws a node of `shape` at `ctr` with its label, in `fill`, `border` and `text` colours.
 #[allow(clippy::too_many_arguments, reason = "one node's whole drawing")]
+/// A cylinder's open end, a shade off its side so the shape reads even without an outline.
+fn lid(fill: Color, paint: &DiagramStyle) -> Color {
+    super::canvas::over_color(paint.text.alpha(0.06), fill)
+}
+
 pub(crate) fn draw(
     c: &mut Canvas,
     shape: NodeShape,
@@ -486,21 +491,21 @@ pub(crate) fn draw(
                     line(c, vec![[x0 + 8.0, y0], [x0 + 8.0, y1]]);
                     line(c, vec![[x1 - 8.0, y0], [x1 - 8.0, y1]]);
                 }
-                // The top rim's front, across the body; its back is the outline. The label sits
-                // in the body under it.
+                // The top is a filled lid, a shade off the side, so it reads without a heavy rim. The
+                // label sits in the body under it.
                 S::Cylinder => {
                     let ry = rim(size[0]);
-                    line(c, arc([ctr[0], y0 + ry], size[0] / 2.0, ry, 0.0, 180.0, 24));
+                    c.shape(ellipse([ctr[0], y0 + ry], size[0] / 2.0, ry), lid(fill, paint), border, 1.0);
                     at[1] += ry / 2.0;
                 }
                 S::LinedCylinder => {
                     let ry = rim(size[0]);
-                    line(c, arc([ctr[0], y0 + ry], size[0] / 2.0, ry, 0.0, 180.0, 24));
+                    c.shape(ellipse([ctr[0], y0 + ry], size[0] / 2.0, ry), lid(fill, paint), border, 1.0);
                     line(c, arc([ctr[0], y0 + ry + LINED], size[0] / 2.0, ry, 0.0, 180.0, 24));
                     at[1] += (ry + LINED) / 2.0;
                 }
                 S::HCylinder => {
-                    line(c, arc([x1 - 8.0, ctr[1]], 8.0, h / 2.0, 90.0, 270.0, 20));
+                    c.shape(ellipse([x1 - 8.0, ctr[1]], 8.0, h / 2.0), lid(fill, paint), border, 1.0);
                     at[0] -= 4.0;
                 }
                 S::DoubleCircle => c.stroke(ellipse(ctr, size[0] / 2.0 - 5.0, size[1] / 2.0 - 5.0), true, 1.0, border),

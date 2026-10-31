@@ -76,7 +76,7 @@ pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<
                 if let Some(m) = &labels[i] {
                     let b = label_box(m);
                     lit_label = Some((c.labels.len(), [at[0], at[1] - b[1] / 2.0, at[0] + b[0], at[1] + b[1] / 2.0], back));
-                    c.label(m, [at[0] + s / 2.0, at[1]], font, paint.text, Align::Center);
+                    c.label(m, [at[0] + s / 2.0, at[1]], font, paint.muted, Align::Center);
                 }
             }
             Some((r, gap)) => {
@@ -92,7 +92,7 @@ pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<
                         c.fill(rounded_rect(g[0], g[1], g[2], g[3], 4.0), back);
                     }
                     lit_label = Some((c.labels.len(), g, back));
-                    c.label(m, at, font, paint.text, Align::Center);
+                    c.label(m, at, font, paint.muted, Align::Center);
                 }
             }
         }
