@@ -469,3 +469,73 @@ fn header_before_virtual_list_keeps_pinned_selection_and_copies_across_unbuilt_r
     let full_expected = full_parts.join("\n");
     assert_eq!(rt.selected_text().as_deref(), Some(full_expected.as_str()));
 }
+
+const SHORT_ROWS: usize = 16;
+const SHORT_H: f32 = 40.0;
+
+struct ShortList {
+    disabled_list: bool,
+    disabled_row: Option<usize>,
+}
+
+fn short_list(s: &ShortList, _: &mut Cx<ShortList>) -> El {
+    let rows = col().key("rows").w_full().growth(GrowthSpec::default()).selection_group(true).virtual_rows(
+        SHORT_ROWS,
+        SHORT_H,
+        |_: &ShortList, i| format!("r{i}").into(),
+        |s: &ShortList, i| {
+            let body = text(format!("row {i} words")).key("body").font(TextStyle::new(14.0, 400.0)).w_full().selectable(true);
+            let row = col().w_full().h(SHORT_H).child(body);
+            if s.disabled_row == Some(i) { row.disabled(true) } else { row }
+        },
+    );
+    let rows = if s.disabled_list { rows.disabled(true) } else { rows };
+    col().size(320.0, 80.0).child(
+        col().key("scroll").w_full().h(80.0).scroll(ScrollSpec { stick_bottom: false }).child(rows),
+    )
+}
+
+fn settle_short(s: ShortList) -> Runtime<ShortList> {
+    let mut rt = Runtime::new(s, short_list, (320.0, 80.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    for _ in 0..8 {
+        if !rt.frame(1.0 / 60.0) { break; }
+    }
+    rt
+}
+
+fn rows_path(rt: &Runtime<ShortList>) -> String {
+    rt.virtuals.keys().find(|k| k.ends_with("rows")).expect("virtual list").clone()
+}
+
+#[test]
+fn offscreen_rows_of_a_disabled_virtual_list_stay_out_of_selection() {
+    let mut open = settle_short(ShortList { disabled_list: false, disabled_row: None });
+    let path = rows_path(&open);
+    assert!(open.virtuals[&path].range.end < SHORT_ROWS, "some rows stay unmounted: {:?}", open.virtuals[&path].range);
+    open.update(|_, tx| tx.select_all_text("rows"));
+    tick(&mut open);
+    let copied = open.selected_text().expect("an enabled list copies every row");
+    assert!(copied.contains("row 0 words") && copied.contains(&format!("row {} words", SHORT_ROWS - 1)), "{copied}");
+
+    let mut shut = settle_short(ShortList { disabled_list: true, disabled_row: None });
+    let path = rows_path(&shut);
+    assert!(shut.virtuals[&path].selection.inert, "a disabled list marks its offscreen selection inert");
+    assert!(shut.virtuals[&path].range.end < SHORT_ROWS);
+    shut.update(|_, tx| tx.select_all_text("rows"));
+    tick(&mut shut);
+    assert!(shut.selected_text().is_none(), "neither mounted nor offscreen rows are selectable: {:?}", shut.selected_text());
+}
+
+#[test]
+fn a_disabled_offscreen_row_stays_out_of_selection() {
+    let skip = SHORT_ROWS - 1;
+    let mut rt = settle_short(ShortList { disabled_list: false, disabled_row: Some(skip) });
+    let path = rows_path(&rt);
+    assert!(!rt.virtuals[&path].range.contains(&skip), "the disabled row is offscreen: {:?}", rt.virtuals[&path].range);
+    rt.update(|_, tx| tx.select_all_text("rows"));
+    tick(&mut rt);
+    let copied = rt.selected_text().expect("the enabled rows still copy");
+    assert!(copied.contains("row 0 words"), "{copied}");
+    assert!(!copied.contains(&format!("row {skip} words")), "the disabled offscreen row stays out: {copied}");
+}

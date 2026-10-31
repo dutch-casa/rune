@@ -125,7 +125,7 @@ fn walk_row_el<'a>(
     texts: &mut Vec<OffscreenText>,
     copy_providers: &mut Vec<(String, SelectionCopy)>,
 ) {
-    let inert = parent_inert || el.inert;
+    let inert = parent_inert || el.inert || el.disabled;
     let group = if el.selection_group { Some(path) } else { parent_group };
     if !inert && let Some(f) = el.handlers.get().and_then(|h| h.selection_copy.as_ref()) {
         copy_providers.push((path.to_owned(), f.clone()));

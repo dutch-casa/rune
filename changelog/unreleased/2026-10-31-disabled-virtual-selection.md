@@ -1,0 +1,1 @@
+- Offscreen rows of a disabled virtual list stay out of text selection, and so does a disabled row in a list that is not.

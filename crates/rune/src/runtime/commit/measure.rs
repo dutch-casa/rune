@@ -208,7 +208,7 @@ impl<S: 'static> Measurement<'_, S> {
             return;
         }
         el.expand_memo();
-        let inert = inert || el.inert;
+        let inert = inert || el.inert || el.disabled;
         let bound = crate::el::virtual_list::height_bound(&el.style, bound);
         let path = node_path(parent, el.key.as_deref(), index);
         if let Some(estimate) = el.virtual_estimate {
