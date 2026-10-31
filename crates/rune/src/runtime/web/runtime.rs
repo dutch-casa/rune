@@ -364,6 +364,30 @@ mod tests {
     }
 
     #[test]
+    fn a_text_view_page_mounts_rows_beyond_the_virtual_window() {
+        fn view(_: &(), _: &mut Cx<()>) -> El {
+            let rows = crate::col().key("rows").growth(crate::GrowthSpec::default())
+                .virtual_rows(80, 40.0, |_: &(), i| format!("r{i}").into(), |_: &(), i| {
+                    crate::text(format!("row {i}")).key(format!("r{i}")).font(crate::TextStyle::new(14.0, 400.0))
+                });
+            crate::col().w_full().h_full().child(
+                crate::col().key("list").w_full().h(200.0).scroll(crate::ScrollSpec { stick_bottom: false }).child(rows))
+        }
+        let mut rt = Runtime::new((), view, (300.0, 300.0), Env::default());
+        rt.frame(0.0);
+        let mounted = |rt: &Runtime<()>| rt.elements().into_iter().filter_map(|e| {
+            e.key.as_deref().and_then(|k| k.strip_prefix('r')).and_then(|n| n.parse::<usize>().ok())
+        }).max().unwrap_or(0);
+        let first = mounted(&rt);
+        assert!(first < 40, "the first window stops early: {first}");
+        assert!(!rt.web_text_view_page(false), "the top has no earlier rows");
+        assert!(rt.web_text_view_page(true), "a later page is still mounted offscreen");
+        for _ in 0..6 { rt.frame(0.0); }
+        let next = mounted(&rt);
+        assert!(next > first, "paging mounts rows past the window: {first} then {next}");
+    }
+
+    #[test]
     fn releasing_a_held_mirror_sends_the_tree_again() {
         fn view(s: &crate::TextEdit, _: &mut Cx<crate::TextEdit>) -> El {
             crate::text_input(s, crate::TextStyle::new(14.0, 400.0)).key("field").size(180.0, 32.0)
@@ -492,6 +516,34 @@ impl<S: 'static> Runtime<S> {
         let moving = v.abs() > 1.0 || *offset < 0.0 || *offset > max;
         if !moving { self.web_scroll = None; }
         Some(moving)
+    }
+
+    /// Moves the virtual list under the text view by about a viewport, toward the end when
+    /// `toward_end`, so rows outside the mounted window mount. The list that holds focus wins;
+    /// otherwise the one with the most hidden rows in that direction.
+    pub(crate) fn web_text_view_page(&mut self, toward_end: bool) -> bool {
+        let focused = self.focused.clone();
+        let mut best: Option<(u8, usize, usize)> = None;
+        for (path, v) in &self.virtuals {
+            let hidden = if toward_end { v.keys.len().saturating_sub(v.range.end) } else { v.range.start };
+            if hidden == 0 { continue; }
+            let Some(i) = self.nodes.iter().position(|n| n.path == v.scroll_path) else { continue };
+            let priority = u8::from(focused.as_ref().is_some_and(|f| f == path || f.starts_with(&format!("{path}/"))));
+            let rank = (priority, hidden, i);
+            if best.is_none_or(|b| rank > b) { best = Some(rank); }
+        }
+        let Some((_, _, i)) = best else { return false };
+        let (id, page, stick) = (self.nodes[i].id, f64::from((self.nodes[i].local.h * 0.9).max(1.0)), self.nodes[i].scroll.is_some_and(|s| s.stick_bottom));
+        let Some(st) = self.scrolls.get_mut(&id) else { return false };
+        let to = if toward_end { st.offset + page } else { st.offset - page };
+        let to = to.clamp(0.0, st.max);
+        if (to - st.offset).abs() < 0.5 { return false; }
+        st.offset = to;
+        st.v = 0.0;
+        st.glide = None;
+        st.direct = true;
+        st.pinned = stick && st.offset >= st.max - 0.5;
+        true
     }
 
     pub(crate) fn web_context(&self, mirror: &mut Mirror) -> bool {

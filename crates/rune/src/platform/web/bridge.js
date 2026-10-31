@@ -446,6 +446,7 @@ function applyBounds(h) {
 export function syncA11y(h, json) {
     if (h.disposed) return;
     const packet = JSON.parse(json);
+    textView.holdScroll(h);
     if (packet.items && compositionHeld(h)) {
         h.imeHeld = true;
         h.modal = !!packet.modal;

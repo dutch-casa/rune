@@ -237,6 +237,7 @@ function apply(h) {
     h.canvas.style.visibility = on ? 'hidden' : h.textView.canvasVisibility;
     if (!on) {
         h.textView.deferred = false;
+        h.textView.pageMarker = null;
         h.a11y.style.cssText = h.textView.rootCss;
         eachEntry(h, entry => h.restoreOverlay(entry));
         h.refreshEntries();
@@ -261,6 +262,34 @@ function trackViewport(h) {
     if (showing(h)) reserve(h);
 }
 
+// The text view shows the mounted window. Reaching either edge asks the runtime to mount
+// the next page of a virtual list. A sync's own scroll does not ask again.
+export function holdScroll(h) {
+    const view = h.textView;
+    if (!view) return;
+    view.suppressScroll = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (h.textView === view) view.suppressScroll = false;
+    }));
+}
+
+function requestPage(h, edge) {
+    if (!showing(h) || h.disposed || h.textView.suppressScroll || !edge) return;
+    const nodes = h.a11y.querySelectorAll('[data-rune-node]');
+    const marker = `${edge}:${nodes[0]?.dataset.runeNode ?? ''}:${nodes[nodes.length - 1]?.dataset.runeNode ?? ''}`;
+    if (h.textView.pageMarker === marker) return;
+    h.textView.pageMarker = marker;
+    h.send({ kind: 'text_view_page', edge });
+}
+
+function atEdge(h) {
+    const root = h.a11y;
+    if (root.scrollHeight <= root.clientHeight + 2) return null;
+    if (root.scrollTop + root.clientHeight >= root.scrollHeight - 2) return 'end';
+    if (root.scrollTop <= 2) return 'start';
+    return null;
+}
+
 export function attach(h) {
     installSheet();
     const control = document.createElement('button');
@@ -272,11 +301,34 @@ export function attach(h) {
     const canvasVisibility = h.canvas.style.visibility;
     h.a11y.setAttribute('data-rune-text-view', 'off');
     h.canvas.before(control);
-    h.textView = { on: false, control, rootCss: h.a11y.style.cssText, canvasVisibility, fixed: !h.embedded, deferred: false };
+    h.textView = { on: false, control, rootCss: h.a11y.style.cssText, canvasVisibility, fixed: !h.embedded, deferred: false, pageMarker: null };
     h.textView.resize = new ResizeObserver(() => trackViewport(h));
     h.textView.resize.observe(control);
     h.textView.resize.observe(h.canvas);
     h.listen(control, 'click', () => toggle(h));
+    h.listen(h.a11y, 'scroll', () => { if (showing(h)) requestPage(h, atEdge(h)); });
+    h.listen(h.a11y, 'wheel', event => {
+        if (!showing(h) || h.textView.suppressScroll) return;
+        const root = h.a11y;
+        const atEnd = root.scrollTop + root.clientHeight >= root.scrollHeight - 2;
+        const atStart = root.scrollTop <= 2;
+        if (event.deltaY > 0 && atEnd) requestPage(h, 'end');
+        else if (event.deltaY < 0 && atStart) requestPage(h, 'start');
+    }, { passive: true });
+    h.listen(h.a11y, 'focusin', event => {
+        if (!showing(h) || h.textView.suppressScroll) return;
+        const node = event.target?.closest?.('[data-rune-node], [data-rune-link]');
+        if (!node || !h.a11y.contains(node)) return;
+        const nodes = h.a11y.querySelectorAll('[data-rune-node]');
+        const first = nodes[0];
+        const last = nodes[nodes.length - 1];
+        const box = node.getBoundingClientRect();
+        const root = h.a11y.getBoundingClientRect();
+        const atLast = last && (node === last || last.contains(node));
+        const atFirst = first && (node === first || first.contains(node));
+        if (atLast || box.bottom >= root.bottom - 4) requestPage(h, 'end');
+        else if (atFirst || box.top <= root.top + 4) requestPage(h, 'start');
+    });
     h.listen(window, 'resize', () => trackViewport(h));
     if (window.visualViewport) {
         h.listen(window.visualViewport, 'resize', () => trackViewport(h));

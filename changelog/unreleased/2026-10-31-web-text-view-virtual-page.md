@@ -1,0 +1,1 @@
+- A text view reaches the rest of a virtual list, mounting further rows as it comes to either edge.

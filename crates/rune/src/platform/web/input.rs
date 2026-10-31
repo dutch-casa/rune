@@ -132,6 +132,7 @@ impl<S: 'static> Running<S> {
             Some("a11y_focus") => activate = self.rt.web_a11y_action(event),
             Some("a11y_blur" | "a11y_press" | "a11y_link") => { let _ = self.rt.web_a11y_action(event); }
             Some("a11y_release") => self.input.a11y.release_hold(),
+            Some("text_view_page") => { let _ = self.rt.web_text_view_page(event["edge"].as_str() != Some("start")); }
             _ => {}
         }
         // Commit within the DOM event: clipboard, link and soft-keyboard APIs need activation.
