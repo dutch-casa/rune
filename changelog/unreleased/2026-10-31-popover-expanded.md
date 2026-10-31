@@ -1,0 +1,1 @@
+- **A popover trigger reports whether its popup is open.** It sets `aria-expanded` and `aria-controls`. The popup stays a non-modal group, so Tab can still leave it.

@@ -98,3 +98,20 @@ fn a_modified_escape_leaves_an_open_popover_alone() {
     rt.frame(0.0);
     assert!(!rt.state.open, "unmodified Escape still dismisses");
 }
+
+#[test]
+fn a_popover_trigger_reports_whether_its_popup_is_open() {
+    let mut rt = Runtime::new(State { open: false }, view, (400.0, 400.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let trigger = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("open")).unwrap();
+    assert_eq!(trigger.expanded, Some(false));
+    assert!(trigger.controls.is_none());
+    rt.update(|s, _| s.open = true);
+    rt.frame(0.0);
+    let trigger = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("open")).unwrap();
+    let content = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("details-content")).unwrap();
+    assert_ne!(content.role, "dialog");
+    assert_eq!(content.role, "group");
+    assert_eq!(trigger.expanded, Some(true));
+    assert_eq!(trigger.controls.as_deref(), Some(content.path.as_str()));
+}

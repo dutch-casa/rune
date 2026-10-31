@@ -207,17 +207,20 @@ impl Popover {
 
     pub fn build(self, k: &Kit, layer: &mut Vec<El>) -> El {
         let c = &k.c;
+        let content_key = format!("{}-content", self.key);
         let anchor_key = format!("{}-trigger", self.key);
         let dismiss_key = self.dismiss_key.clone();
-        let mut trigger = row().key(anchor_key.clone()).children(self.trigger);
+        // The surface stays a group, not a dialog, so it does not take focus on open.
+        // The trigger still reports whether it is open and which node it controls.
+        let inner = self.trigger.map(|t| t.expanded(self.open).controls(content_key.clone()));
+        let mut trigger = row().key(anchor_key.clone()).children(inner);
         if !self.open {
             return trigger;
         }
         if let Some(bind) = dismiss_key.clone() {
             trigger = bind(trigger);
         }
-        let mut content = col().key(format!("{}-content", self.key)).role("dialog")
-            .focus_return(&anchor_key).min_w(200.0).max_w(320.0);
+        let mut content = col().key(content_key).focus_return(&anchor_key).min_w(200.0).max_w(320.0);
         if let Some(bind) = dismiss_key {
             content = bind(content);
         }
