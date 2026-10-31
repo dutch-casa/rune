@@ -4,11 +4,13 @@
 use std::rc::Rc;
 use std::time::Duration;
 
-use rune::{Anim, Color, Curve, Cursor, Drag, Easing, El, Phase, Spring, Transition, Tx, col, el, icon, row};
+use rune::{Anim, Color, Curve, Cursor, Drag, Easing, El, Phase, Spring, Transition, Tx, col, el, row};
 
-use super::pane::{PaneMotion, PaneState, Peek, SidebarPeek, StepMenu};
+use super::pane::{PaneMotion, PaneState, Peek, SidebarPeek};
 use super::toolbar::{TOOLBAR_HEIGHT, Toolbar};
-use crate::{ControlSize, IconButton, IconButtonVariant, Kit, Menu, MenuItem};
+use crate::{ControlSize, IconButton, IconButtonVariant, Kit};
+
+mod width_button;
 
 type Apply = Box<dyn FnOnce(El) -> El>;
 /// Delayed hover on an element: `(e, enter, leave, peek)` peeks the sidebar once the pointer
@@ -358,7 +360,7 @@ impl SplitView {
             }
             let width_bind = p.width_button.take();
             let width_button = if open {
-                Some(width_control(k, true, width_bind.expect("sidebar width control")))
+                Some(width_button::width_control(k, true, width_bind.expect("sidebar width control")))
             } else {
                 drop(width_bind);
                 None
@@ -414,7 +416,7 @@ impl SplitView {
             let open = p.state.is_open();
             let width_bind = p.width_button.take();
             let width_button = if open {
-                Some(width_control(k, false, width_bind.expect("inspector width control")))
+                Some(width_button::width_control(k, false, width_bind.expect("inspector width control")))
             } else {
                 drop(width_bind);
                 None
@@ -530,67 +532,6 @@ impl Page {
     }
 }
 
-fn pane_step_menu<S: 'static>(
-    anchor: StepMenu,
-    access: fn(&mut S) -> &mut PaneState,
-    sign: f32,
-    key: &'static str,
-    control: &'static str,
-) -> Box<dyn FnOnce(&Kit, &mut Vec<El>)> {
-    Box::new(move |k, layer| {
-        let glyph = |turn: f32| icon(k.glyph.chevron_down, 14.0).icon_rotation(turn);
-        let right = -std::f32::consts::FRAC_PI_2;
-        let left = std::f32::consts::FRAC_PI_2;
-        let (narrow_turn, widen_turn) = if sign > 0.0 { (left, right) } else { (right, left) };
-        let step = {
-            let access = access;
-            move |delta: f32| {
-                let access = access;
-                move |s: &mut S| {
-                    let p = access(s);
-                    if p.is_open() {
-                        p.set_width(p.width() + sign * delta * KEY_STEP);
-                    }
-                    p.set_step_menu(None);
-                }
-            }
-        };
-        let menu = Menu::new(key)
-            .open(true)
-            .item(MenuItem::new("Narrow").lead(glyph(narrow_turn)).on_select(step(-sign)))
-            .item(MenuItem::new("Widen").lead(glyph(widen_turn)).on_select(step(sign)))
-            .item(MenuItem::new("Reset").on_select({
-                let access = access;
-                move |s: &mut S| {
-                    let p = access(s);
-                    p.reset_width();
-                    p.set_step_menu(None);
-                }
-            }))
-            .on_close({
-                let access = access;
-                move |s: &mut S| access(s).set_step_menu(None)
-            });
-        let menu = match anchor {
-            StepMenu::At(point) => menu.at(point.x, point.y),
-            StepMenu::Control => menu.beside(control),
-        };
-        let _ = menu.build(k, layer);
-    })
-}
-
-fn width_control(k: &Kit, leading: bool, bind: Apply) -> El {
-    let button = IconButton::new(k.glyph.chevron_down)
-        .variant(IconButtonVariant::GhostMuted)
-        .control_size(ControlSize::Regular)
-        .label(if leading { "Sidebar width" } else { "Inspector width" })
-        .help("Narrow, widen, or reset")
-        .build(k)
-        .key(if leading { SIDEBAR_WIDTH } else { INSPECTOR_WIDTH })
-        .transition(Transition::none());
-    bind(button)
-}
-
 /// Handlers for a pane's grip and toggle, typed by the app's state.
 fn pane<S: 'static>(state: PaneState, access: fn(&mut S) -> &mut PaneState, content: El, sign: f32, toggle: bool) -> Pane {
     let drag: Apply = Box::new(move |e: El| {
@@ -666,7 +607,7 @@ fn pane<S: 'static>(state: PaneState, access: fn(&mut S) -> &mut PaneState, cont
         }) as Hover
     });
     let (menu_key, control_key) = if sign > 0.0 { ("sidebar-step", SIDEBAR_WIDTH) } else { ("inspector-step", INSPECTOR_WIDTH) };
-    let step_menu = state.step_menu().map(|anchor| pane_step_menu(anchor, access, sign, menu_key, control_key));
+    let step_menu = state.step_menu().map(|anchor| width_button::pane_step_menu(anchor, access, sign, menu_key, control_key));
     Pane { state, content, handlers: vec![drag, keys], toggle, clear, hover, width_button, step_menu }
 }
 
