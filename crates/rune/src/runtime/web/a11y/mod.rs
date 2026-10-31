@@ -1,4 +1,6 @@
-//! Semantic DOM projection and native editor contexts for the retained scene.
+//! Hidden semantic DOM mirror for the browser shell: headings, text runs with inline links,
+//! buttons and native editors positioned over the canvas so assistive tech and browser
+//! Find-in-page see the scene.
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 use crate::el::a11y::LabelSource;
 use std::hash::{Hash, Hasher};
