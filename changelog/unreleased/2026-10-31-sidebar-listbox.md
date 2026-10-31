@@ -1,0 +1,1 @@
+- **A sidebar is a listbox.** Rows are options with a selection, a collapsed section is one disclosure button whose name includes its count, and a row's Close shortcut is exposed.

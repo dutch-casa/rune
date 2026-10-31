@@ -202,7 +202,7 @@ fn the_list_is_one_tab_stop_whose_arrows_and_typing_move_the_selection() {
     for _ in 0..4 {
         press(&mut rt, Key::Down);
     }
-    assert_eq!(rt.state.picked, 3, "stops at the end");
+    assert_eq!(rt.state.picked, 2, "a listbox wraps");
     press(&mut rt, Key::Home);
     assert_eq!(rt.state.picked, 0);
     press(&mut rt, Key::Text("c".into()));
@@ -216,7 +216,7 @@ fn the_list_is_one_tab_stop_whose_arrows_and_typing_move_the_selection() {
 fn long_lists_build_only_the_rows_near_the_viewport() {
     let mut rt = runtime(S { rows: Some(5_000), ..state() });
     settle(&mut rt);
-    let rows = rt.elements().into_iter().filter(|e| e.role == "listitem").count();
+    let rows = rt.elements().into_iter().filter(|e| e.role == "option").count();
     assert!((10..300).contains(&rows), "{rows} rows built");
     assert!(rt.find("row0").is_some() && rt.find("row4999").is_none());
     press(&mut rt, Key::Tab);
@@ -228,7 +228,7 @@ fn long_lists_build_only_the_rows_near_the_viewport() {
     rt.key(toggle_shortcut());
     for _ in 0..30 {
         rt.frame(1.0 / 60.0);
-        let built = rt.elements().into_iter().filter(|e| e.role == "listitem").count();
+        let built = rt.elements().into_iter().filter(|e| e.role == "option").count();
         assert!(built < 300, "offscreen rows built mid-spring: {built}");
     }
     let spring_us = t_spring.elapsed().as_secs_f64() * 1e6 / 30.0;
@@ -266,8 +266,8 @@ fn roles_and_labels_describe_the_shell() {
     let mut rt = runtime(state());
     let all = rt.elements();
     let role = |key: &str| all.iter().find(|e| e.key.as_deref() == Some(key)).map(|e| (e.role, e.label.clone()));
-    assert_eq!(role("sidebar-list"), Some(("list", Some("Sessions".into()))));
-    assert_eq!(role("row2"), Some(("listitem", Some("Charlie".into()))));
+    assert_eq!(role("sidebar-list"), Some(("listbox", Some("Sessions".into()))));
+    assert_eq!(role("row2"), Some(("option", Some("Charlie".into()))));
     let header = all.iter().find(|e| e.key.as_deref() == Some("section-header")).unwrap();
     assert_eq!((header.role, header.label.as_deref(), header.expanded), ("button", Some("Today"), Some(true)));
     assert_eq!(role("toolbar").map(|r| r.0), Some("toolbar"));
@@ -549,7 +549,7 @@ fn two_line_rows_keep_focus_keyboard_navigation_and_accessible_labels() {
     let mut rt = runtime(S { two_lines: true, ..state() });
     let focused = |rt: &Runtime<S>| rt.elements().into_iter().find(|e| e.focused).and_then(|e| e.key);
     let r2 = find(&rt, "row2");
-    assert_eq!((r2.role, r2.label.as_deref(), r2.rect[3]), ("listitem", Some("Charlie, user2@example.com"), 40.0));
+    assert_eq!((r2.role, r2.label.as_deref(), r2.rect[3]), ("option", Some("Charlie, user2@example.com"), 40.0));
 
     press(&mut rt, Key::Tab);
     assert_eq!(focused(&rt).as_deref(), Some("row1"), "Tab lands on the selected two-line row");
@@ -876,15 +876,28 @@ fn left_collapses_a_section_and_the_collapsed_stop_expands_it() {
     let mut saw = false;
     for _ in 0..8 {
         press(&mut rt, Key::Tab);
-        if focused(&rt).as_deref() == Some("section-toggle") {
+        if focused(&rt).as_deref() == Some("section-header") {
             saw = true;
             break;
         }
     }
     assert!(saw, "a collapsed section is its own stop");
-    assert_eq!(find(&rt, "section-toggle").expanded, Some(false));
+    let header = find(&rt, "section-header");
+    assert_eq!((header.role, header.focusable, header.expanded), ("button", true, Some(false)));
     press(&mut rt, Key::Text(" ".into()));
     assert!(!rt.state.collapsed);
+}
+
+#[test]
+fn a_section_header_includes_its_count_in_the_name() {
+    fn view(_: &(), _: &mut Cx<()>) -> El {
+        let k = Kit::neutral(true);
+        Sidebar::new().section(SidebarSection::new("Today").count(4).row(SidebarRow::new("Alpha").build(&k))).build(&k)
+    }
+    let mut rt = Runtime::new((), view, (240.0, 200.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let header = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("section-header")).unwrap();
+    assert_eq!(header.label.as_deref(), Some("Today, 4"));
 }
 
 #[test]
@@ -904,6 +917,8 @@ fn delete_on_a_focused_row_runs_its_close() {
     rt.frame(1.0 / 60.0);
     let close = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("close")).unwrap();
     assert!(!close.focusable);
+    let row = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("row")).unwrap();
+    assert_eq!(row.key_shortcuts.as_deref(), Some("Delete"));
     rt.key(KeyEvent { key: Key::Delete, mods: Mods::default() });
     rt.frame(1.0 / 60.0);
     assert!(rt.state.closed);

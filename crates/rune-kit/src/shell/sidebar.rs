@@ -134,7 +134,7 @@ impl Sidebar {
 
     pub fn build(self, k: &Kit) -> El {
         let inset = self.inset;
-        let list = col().key("sidebar-list").role("list").label(self.label).focus_group().focus_follows().w_full().px(inset);
+        let list = col().key("sidebar-list").role("listbox").label(self.label).focus_group().focus_follows().w_full().px(inset);
         let list = match self.body {
             Body::Items(items) => list.pb(INSET).gap(self.row_gap).children(items.into_iter().map(|f| f(k))),
             Body::Virtual(rows) => rows(list.growth(GrowthSpec::default()), self.row_height),
@@ -233,6 +233,10 @@ impl SidebarHeader {
 
     pub fn build(self, k: &Kit) -> El {
         let c = &k.c;
+        let name = match self.count.as_deref() {
+            Some(n) if !n.is_empty() => format!("{}, {n}", self.title),
+            _ => self.title.clone(),
+        };
         let mut title = row()
             .key("section-title")
             .gap(4.0)
@@ -240,18 +244,18 @@ impl SidebarHeader {
             .shrink()
             .child(text(self.title.clone()).font(k.ty.text_xsmall_medium).color(c.text_muted).truncate().shrink());
         if let Some(n) = self.count {
-            title = title.child(text(n).key("count").font(k.ty.text_xsmall_medium).color(c.text_faint));
+            title = title.child(text(n).key("count").role("none").font(k.ty.text_xsmall_medium).color(c.text_faint));
         }
         if let Some(collapsed) = self.collapsed {
             let glyph = if collapsed { k.glyph.triangle_right } else { k.glyph.triangle_down };
             title = title.child(icon(glyph, 12.0).key("disclosure").color(c.icon_faint));
         }
-        let label = self.title;
+        let label = name;
         let keys = self.section_keys;
         let collapsed = self.collapsed == Some(true);
         let mut header = row()
             .key("section-header")
-            .label(label.clone())
+            .label(label)
             .w_full()
             .h(ROW_HEIGHT)
             .pt(4.0)
@@ -280,10 +284,8 @@ impl SidebarHeader {
                 return col().key("section-toggle").role("none").w_full().focus_group()
                     .child(keys(collapsed, button.focusable(true)));
             }
-            return keys(
-                collapsed,
-                col().key("section-toggle").role("group").label(label).expanded(!collapsed).w_full().focusable(true).child(button),
-            );
+            // One disclosure button: the header itself, not a second group with the same name.
+            return keys(collapsed, button.focusable(true));
         }
         button
     }
@@ -711,9 +713,10 @@ impl SidebarRow {
             r = (re.bind)(r);
         }
         // After the handlers, which would make it a button.
-        let mut r = r.role("listitem");
+        let mut r = r.role("option");
         if let Some(key) = self.close_key {
-            r = key(r);
+            // Delete runs the close. Backspace does too; one shortcut, not a sequence of both.
+            r = key(r).key_shortcuts("Delete");
         }
         r
     }
