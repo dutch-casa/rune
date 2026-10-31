@@ -1,8 +1,9 @@
-//! Which backend a Mac app draws with: wgpu's, or Rune's native Metal backend (`metal-backend`).
+//! Which backend an Apple app draws with: wgpu's, or Rune's native Metal backend (`metal-backend`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// The GPU backend an app draws with on macOS (`App::gpu_backend`). Elsewhere wgpu picks one.
+/// The GPU backend an app draws with on macOS (`App::gpu_backend`) and iOS (`prewarm_gpu_on`, before
+/// the first `embed::LayerHost`). Elsewhere wgpu picks one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GpuBackend {
     /// wgpu's Metal backend.
@@ -12,28 +13,31 @@ pub enum GpuBackend {
     Metal,
 }
 
-#[cfg_attr(not(all(target_os = "macos", feature = "metal-backend")), allow(dead_code))]
+#[cfg_attr(not(all(target_vendor = "apple", feature = "metal-backend")), allow(dead_code))]
 static METAL: AtomicBool = AtomicBool::new(false);
 
 /// Makes GPUs from now on with `backend`, process-wide. A `prewarm_gpu` running on another
 /// backend starts over on this one.
-#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+#[cfg_attr(not(target_vendor = "apple"), allow(unused_variables))]
 pub(crate) fn choose(backend: GpuBackend) {
-    #[cfg(all(target_os = "macos", not(feature = "metal-backend")))]
+    #[cfg(all(target_vendor = "apple", not(feature = "metal-backend")))]
     if backend == GpuBackend::Metal {
         eprintln!("rune: GpuBackend::Metal needs Rune's `metal-backend` feature; drawing with wgpu");
     }
-    #[cfg(all(target_os = "macos", feature = "metal-backend"))]
+    #[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
     {
         let before = current();
         METAL.store(backend == GpuBackend::Metal, Ordering::Relaxed);
+        #[cfg(target_os = "macos")]
         if current() != before {
             crate::render::restart_prewarm();
         }
+        #[cfg(not(target_os = "macos"))]
+        let _ = before;
     }
 }
 
-#[cfg_attr(not(all(target_os = "macos", feature = "metal-backend")), allow(dead_code))]
+#[cfg_attr(not(all(target_vendor = "apple", feature = "metal-backend")), allow(dead_code))]
 /// The backend GPUs are made with: `RUNE_GPU_BACKEND` (`wgpu` or `metal`) over the app's choice.
 pub(crate) fn current() -> GpuBackend {
     let chosen = if METAL.load(Ordering::Relaxed) { GpuBackend::Metal } else { GpuBackend::Wgpu };
@@ -42,14 +46,14 @@ pub(crate) fn current() -> GpuBackend {
 
 /// What `RUNE_GPU_LOG` calls the backend that draws.
 pub(crate) fn label() -> &'static str {
-    #[cfg(all(target_os = "macos", feature = "metal-backend"))]
+    #[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
     if current() == GpuBackend::Metal {
         return "rune backend";
     }
     "wgpu"
 }
 
-#[cfg_attr(not(all(target_os = "macos", feature = "metal-backend")), allow(dead_code))]
+#[cfg_attr(not(all(target_vendor = "apple", feature = "metal-backend")), allow(dead_code))]
 fn resolve(env: Option<&str>, chosen: GpuBackend) -> GpuBackend {
     match env {
         Some("metal") => GpuBackend::Metal,

@@ -479,7 +479,7 @@ impl Gpu {
     /// 40 ms on a Mac's first launch after an install or update). Indirect draws a compositor
     /// records on Rune's device still work; wgpu just doesn't check their argument buffers.
     pub fn instance() -> wgpu::Instance {
-        #[cfg(all(target_os = "macos", feature = "metal-backend"))]
+        #[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
         if crate::gpu::metal::enabled() { return crate::gpu::metal::instance(); }
         Self::wgpu_instance()
     }
@@ -567,7 +567,8 @@ pub fn prewarm_gpu() {
 
 /// Chooses `backend` (as `App::gpu_backend` does), then starts `prewarm_gpu`'s thread on it, so a
 /// Metal app's prewarm never starts on wgpu and restarts. `App::gpu_backend` with the same backend
-/// afterwards changes nothing. Elsewhere, or without `metal-backend`, it is `prewarm_gpu`.
+/// afterwards changes nothing. On iOS it only chooses: call it before the first `embed::LayerHost`
+/// (and `embed::prewarm`). Elsewhere, or without `metal-backend`, it is `prewarm_gpu`.
 pub fn prewarm_gpu_on(backend: crate::GpuBackend) {
     choose_then_start(backend, crate::gpu::backend::choose, prewarm::start);
 }

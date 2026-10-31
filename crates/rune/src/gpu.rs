@@ -1,8 +1,8 @@
-//! The GPU under a surface. On macOS, the Metal backend: wgpu's own, or with `metal-backend` Rune's native one
-//! (`metal`), which `RUNE_GPU_BACKEND=metal` selects.
+//! The GPU under a surface. On macOS and iOS, the Metal backend: wgpu's own, or with `metal-backend` Rune's
+//! native one (`metal`), which `GpuBackend::Metal` or `RUNE_GPU_BACKEND=metal` selects.
 
 pub(crate) mod backend;
-#[cfg(all(target_os = "macos", feature = "metal-backend"))]
+#[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
 pub(crate) mod metal;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod pick;

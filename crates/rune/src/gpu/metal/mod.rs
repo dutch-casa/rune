@@ -63,17 +63,21 @@ pub(crate) type Obj<P> = Retained<ProtocolObject<P>>;
 pub(crate) type Owner = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 
 /// The Metal device under `device`, when it's this backend's.
+// macOS-only callers: video, native surfaces and the precompiled metallib.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn raw_device(device: &wgpu::Device) -> Option<&ProtocolObject<dyn MTLDevice>> {
     device.as_custom::<MetalDevice>().map(|d| &*d.shared.device)
 }
 
 /// A texture over `raw`, made on `raw_device`'s device and matching `desc`, which `owner` keeps valid.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn texture_from_raw(raw: Obj<dyn objc2_metal::MTLTexture>, desc: &wgpu::TextureDescriptor<'_>, owner: Owner) -> wgpu::Texture {
     wgpu::Texture::from_custom(resource::MetalTexture::from_raw(raw, desc, owner), desc)
 }
 
 /// Whether `module`, made on this backend, can make pipelines from all its entry points: false
 /// for a precompiled library Metal refused or that lacks one of them.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn module_ready(module: &wgpu::ShaderModule) -> bool {
     module.as_custom::<shader::ShaderModule>().is_some_and(shader::ShaderModule::ready)
 }
@@ -81,6 +85,7 @@ pub(crate) fn module_ready(module: &wgpu::ShaderModule) -> bool {
 /// The MSL this backend compiles `wgsl`'s `vs` and `fs` to, in MSL `lang`, for a render
 /// pipeline whose one bind group has `entries`.
 #[cfg(test)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn render_msl(wgsl: &str, entries: &[wgpu::BindGroupLayoutEntry], lang: (u8, u8)) -> [String; 2] {
     let ir = shader::Ir::parse("render_msl", wgsl, wgpu::ShaderRuntimeChecks::checked());
     let group = layout::BindGroupLayout::new(&wgpu::BindGroupLayoutDescriptor { label: None, entries });
@@ -102,6 +107,7 @@ pub(crate) fn instance() -> wgpu::Instance {
 }
 
 /// Whether `queue` is this backend's.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn owns(queue: &wgpu::Queue) -> bool { queue.as_custom::<submit::MetalQueue>().is_some() }
 
 /// Staging's in-place writer: a Metal buffer the GPU only reads takes writes into its storage.
@@ -110,6 +116,7 @@ fn write_in_place(buffer: &wgpu::Buffer, offset: u64, data: &[u8]) -> bool {
 }
 
 /// The CAMetalLayer a surface of this backend presents into.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn layer<'s>(surface: &'s wgpu::Surface<'_>) -> Option<&'s objc2_video::runtime::AnyObject> {
     surface.as_custom::<surface::MetalSurface>().map(|s| -> &objc2_video::runtime::AnyObject { s.layer() })
 }

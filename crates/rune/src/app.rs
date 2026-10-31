@@ -306,7 +306,8 @@ impl<S: 'static> App<S> {
     /// `RUNE_GPU_BACKEND=wgpu` or `=metal` overrides it without a rebuild. It applies to every
     /// GPU the process makes from here on, and a `prewarm_gpu` already running on the other
     /// backend starts over on this one; call `rune::prewarm_gpu_on(backend)` first in `main`
-    /// instead of `prewarm_gpu()` to start it on this backend and avoid the restart. Does nothing elsewhere.
+    /// instead of `prewarm_gpu()` to start it on this backend and avoid the restart. An iOS app,
+    /// which embeds a `LayerHost` instead, calls `rune::prewarm_gpu_on`. Does nothing elsewhere.
     pub fn gpu_backend(self, backend: crate::GpuBackend) -> Self {
         crate::gpu::backend::choose(backend);
         self
