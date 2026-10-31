@@ -196,7 +196,7 @@ fn active_index_scrolls_into_view_and_updates_listbox_accessibility() {
     assert_eq!(listbox.label.as_deref(), Some("Commands"));
     let first = find(&rt, "commands-option-cmd-0").unwrap();
     assert_eq!(first.role, "option");
-    assert!(first.item_selected && first.item_cursor);
+    assert!(first.item_cursor && !first.item_selected);
 
     // Moving active to the last item (via Up key in the outside field) reveals the offscreen row.
     rt.key(KeyEvent { key: Key::Up, mods: Mods::default() });
@@ -204,7 +204,7 @@ fn active_index_scrolls_into_view_and_updates_listbox_accessibility() {
     assert_eq!(rt.state.active, Some(39));
     let last = find(&rt, "commands-option-cmd-39").expect("active virtual row is mounted and revealed");
     assert!(last.visible[3] > 0.0, "last row visible rect {:?}", last.visible);
-    assert!(last.item_selected && last.item_cursor);
+    assert!(last.item_cursor && !last.item_selected);
     let listbox = find(&rt, "commands-listbox").unwrap();
     assert_eq!(listbox.label.as_deref(), Some("Commands"));
 }
@@ -234,6 +234,8 @@ fn hover_fires_on_active_click_fires_on_choose_and_outside_text_edit_keeps_focus
     );
 
     // Clicking disabled option 1 neither chooses nor blurs the outside TextEdit.
+    let disabled = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("commands-option-cmd-1")).unwrap();
+    assert!(disabled.disabled);
     let (x1, y1) = rt.find("commands-option-cmd-1").unwrap();
     rt.pointer_down(x1, y1);
     rt.pointer_up(x1, y1);
@@ -309,4 +311,27 @@ fn ordinary_listbox_selection_does_not_reveal_and_press_still_blurs() {
     let (x, y) = rt.find("row-0").unwrap();
     rt.pointer_down(x, y); rt.pointer_up(x, y); rt.frame(0.0);
     assert!(!rt.state.composer.focused, "ordinary listbox presses still blur the field");
+}
+
+#[test]
+fn a_selected_popup_option_is_the_committed_choice() {
+    fn view(_: &State, _: &mut Cx<State>) -> El {
+        let k = Kit::neutral(true);
+        let mut layer = Vec::new();
+        PopupList::new("pick", "")
+            .open(true)
+            .active(Some(1))
+            .item(PopupItem::new("a", "Alpha").selected(true))
+            .item(PopupItem::new("b", "Beta"))
+            .on_choose(|_: &mut State, _: &str, _| {})
+            .build(&k, &mut layer);
+        root(col(), layer)
+    }
+    let mut rt = Runtime::new(State::default(), view, (320.0, 240.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let opt = |id: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(id)).unwrap();
+    let chosen = opt("pick-option-a");
+    let highlight = opt("pick-option-b");
+    assert!(chosen.item_selected && !chosen.item_cursor);
+    assert!(!highlight.item_selected && highlight.item_cursor);
 }

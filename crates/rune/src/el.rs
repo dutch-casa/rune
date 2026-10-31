@@ -974,10 +974,10 @@ impl El {
         self.focus.in_selection = true;
         self
     }
-    /// On a virtualized stack, reveal its selected row when the selected key changes,
-    /// even while another control owns keyboard focus. Frames dispatching `on_hover`
-    /// do not scroll, so hover-driven selection does not move the row under the pointer.
-    /// Off by default; useful for suggestions controlled by an outside text field.
+    /// On a virtualized stack, reveal its cursor row, or its selected row when it has no
+    /// cursor, when that key changes, even while another control owns keyboard focus.
+    /// Frames dispatching `on_hover` do not scroll, so a hover highlight does not move the
+    /// row under the pointer. Off by default; useful for suggestions from an outside field.
     pub fn reveal_selected(mut self, enabled: bool) -> Self {
         self.focus.reveal_selected = enabled;
         self

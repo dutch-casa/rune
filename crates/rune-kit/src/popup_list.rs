@@ -18,6 +18,7 @@ pub struct PopupItem {
     leading: Option<El>,
     trailing: Option<El>,
     disabled: bool,
+    selected: bool,
 }
 
 impl PopupItem {
@@ -29,6 +30,7 @@ impl PopupItem {
             leading: None,
             trailing: None,
             disabled: false,
+            selected: false,
         }
     }
     /// Secondary muted text shown after the label on the same row.
@@ -49,6 +51,11 @@ impl PopupItem {
     }
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
+        self
+    }
+    /// The committed choice. The highlight ([`PopupList::active`]) is the cursor, not the selection.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
     pub fn id(&self) -> &str {
@@ -243,7 +250,7 @@ impl<S: 'static> PopupList<S> {
                 .key(format!("{}-option-{}", self.key, id))
                 .role("option")
                 .label(&option.label)
-                .focus_selected(is_active)
+                .focus_selected(option.selected)
                 .focus_cursor(is_active)
                 .w_full()
                 .h(28.0)
@@ -267,7 +274,7 @@ impl<S: 'static> PopupList<S> {
                 item = item.child(trailing.clone());
             }
             if option.disabled {
-                item = item.dim(0.5).on_press(|_: &mut S| {});
+                item = item.dim(0.5).disabled(true);
             } else {
                 if let Some(on_active) = &self.on_active {
                     let on_active = on_active.clone();

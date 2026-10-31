@@ -217,7 +217,8 @@ impl<S: 'static> Combobox<S> {
         let active_pos = active.and_then(|orig| choices.iter().position(|&c| c == orig));
         let items: Vec<_> = choices.iter().map(|&i| {
             let option = &self.options[i];
-            PopupItem::new(&option.id, &option.label).description(&option.detail).disabled(option.disabled).trailing(
+            PopupItem::new(&option.id, &option.label).description(&option.detail).disabled(option.disabled)
+                .selected(self.current.as_deref() == Some(option.id.as_str())).trailing(
                 icon(k.glyph.check_small, 14.0)
                     .color(k.c.icon_base)
                     .opacity(if self.current.as_deref() == Some(option.id.as_str()) { 1.0 } else { 0.0 }),

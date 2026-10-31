@@ -480,7 +480,10 @@ impl<S: 'static> Measurement<'_, S> {
         } else {
             v.selection.source = None;
             if !self.retry && el.focus.reveal_selected {
-                let selected = el.children.iter().find(|c| c.focus.selected).and_then(|c| c.key.clone());
+                // The cursor is the highlight a popup moves. Selection is the committed choice.
+                let selected = el.children.iter().find(|c| c.focus.cursor)
+                    .or_else(|| el.children.iter().find(|c| c.focus.selected))
+                    .and_then(|c| c.key.clone());
                 if selected != v.selected_row {
                     v.reveal_selected = selected.clone();
                     v.selected_row = selected;

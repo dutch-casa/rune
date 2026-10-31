@@ -1,0 +1,1 @@
+- **A popup option announces the committed choice.** The highlight is the cursor. A disabled option is `aria-disabled` and does not press. A virtual list still reveals the cursor row.

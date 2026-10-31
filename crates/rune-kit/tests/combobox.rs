@@ -288,3 +288,17 @@ fn typing_crossfades_the_rows_in_view() {
     assert!(top.abs() < 0.5 && opacity < 0.05, "it fades in rather than appearing whole: {top} at {opacity}");
 }
 
+#[test]
+fn a_combobox_announces_the_committed_choice_not_the_highlight() {
+    let mut rt = open(State { chosen: Some("item-0".into()), ..State::default() });
+    rt.update(|s, _| s.combo.active = Some("item-2".into()));
+    rt.frame(0.0);
+    let opt = |id: &str| rt.elements().into_iter().find(|e| e.key.as_deref() == Some(id)).unwrap();
+    let committed = opt("models-option-item-0");
+    let highlight = opt("models-option-item-2");
+    let disabled = opt("models-option-item-1");
+    assert!(committed.item_selected && !committed.item_cursor);
+    assert!(!highlight.item_selected && highlight.item_cursor);
+    assert!(disabled.disabled && !disabled.item_selected);
+}
+
