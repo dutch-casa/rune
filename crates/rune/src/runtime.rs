@@ -290,6 +290,8 @@ use cache_layer::{ActiveCache, NodeCache};
 #[path = "runtime/paint/helpers.rs"]
 mod paint_helpers;
 use paint_helpers::*;
+#[path = "runtime/paint/content.rs"]
+mod paint_content;
 #[path = "runtime/input/hit.rs"]
 mod hit;
 #[path = "runtime/paint/build.rs"]
