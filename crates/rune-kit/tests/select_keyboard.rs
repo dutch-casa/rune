@@ -61,3 +61,19 @@ fn a_select_opens_on_its_value_and_chooses_or_dismisses_from_the_keyboard() {
     assert!(!rt.state.open, "a press outside closes it");
     assert_eq!(rt.state.value, "Cherry");
 }
+
+#[test]
+fn a_disabled_select_does_not_report_an_open_listbox() {
+    fn view(_: &(), _: &mut Cx<()>) -> El {
+        let mut layer = Vec::new();
+        let select = Select::new("fruit", &["Apple"]).open(true).disabled(true).build(&Kit::neutral(true), &mut layer);
+        root(select, layer)
+    }
+    let mut rt = Runtime::new((), view, (240.0, 120.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let trigger = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("fruit-trigger")).unwrap();
+    assert!(trigger.disabled);
+    assert_eq!(trigger.expanded, Some(false));
+    assert!(trigger.controls.is_none());
+    assert!(rt.elements().iter().all(|e| e.role != "listbox"));
+}

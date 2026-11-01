@@ -143,10 +143,9 @@ impl<S: 'static> Combobox<S> {
                 if state.open && let Some(id) = &current { tx.scroll_into_view(format!("{open_key}-option-{id}")); }
             });
         }
-        trigger = trigger.expanded(self.state.open && !self.disabled).controls(format!("{}-listbox", self.key));
         if self.disabled { trigger = trigger.disabled(true); }
         let mut popover = Popover::new(&self.key).trigger(trigger).placement(self.placement).padding(0.0)
-            .open(self.state.open && !self.disabled);
+            .controls(format!("{}-listbox", self.key)).open(self.state.open && !self.disabled);
         let access = self.access.clone();
         popover = popover.on_close(move |s: &mut S| access(s).close());
         if !self.state.open || self.disabled { return popover.build(k, layer); }

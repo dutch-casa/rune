@@ -301,6 +301,7 @@ impl TextInput {
         value = value.child(field);
         let mut e = row()
             .role("textbox")
+            .disabled(disabled)
             .placeholder_label(self.placeholder.clone())
             .h(height)
             .pr(8.0)
@@ -469,7 +470,7 @@ impl TextArea {
         }
         let field = self.edits.apply(field, disabled);
         let line = style.line_px();
-        let mut e = col().role("textbox").placeholder_label(self.placeholder.clone()).padding(8.0);
+        let mut e = col().role("textbox").placeholder_label(self.placeholder.clone()).disabled(disabled).padding(8.0);
         e = if let Some((min_rows, max_rows)) = self.grow {
             let viewport = rune::auto_grow(field, min_rows, max_rows);
             e.child(match self.max_height {
@@ -631,7 +632,7 @@ impl TextField {
             b = self.copy_acts.apply(b, self.state != State::Disabled);
             wrapper = wrapper.pr(4.0).child(b);
         }
-        let mut root = col().role("textbox").label(self.label.clone()).gap(8.0).w_full();
+        let mut root = col().role("textbox").label(self.label.clone()).disabled(self.state == State::Disabled).gap(8.0).w_full();
         if !self.hide_label {
             root = root.child(text(self.label.clone()).key("label").font(k.ty.text_xsmall_medium).color(c.text_weak));
         }

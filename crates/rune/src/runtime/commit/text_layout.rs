@@ -92,7 +92,7 @@ impl Node {
 
 /// Where truncation cut a text: it draws `content[..head]`, "…", then `content[tail..]`.
 /// Selections and links stay in content bytes and map through this onto the drawn layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Elision {
     pub(super) head: usize,
     pub(super) tail: usize,

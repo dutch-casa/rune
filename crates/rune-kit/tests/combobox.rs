@@ -90,6 +90,22 @@ fn combobox_loops_skips_disabled_and_scrolls_virtual_rows_into_view() {
 }
 
 #[test]
+fn clicking_a_disabled_option_keeps_the_combobox_open_and_search_focused() {
+    let mut rt = runtime();
+    rt.settle_all();
+    rt.frame(0.0);
+    let option = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("models-option-item-1")).unwrap();
+    assert!(option.disabled);
+    let (x, y) = (option.rect[0] + option.rect[2] / 2.0, option.rect[1] + option.rect[3] / 2.0);
+    rt.pointer_down(x, y);
+    rt.pointer_up(x, y);
+    rt.frame(0.0);
+    assert!(rt.state.combo.open);
+    assert!(rt.state.combo.search.focused);
+    assert!(rt.state.chosen.is_none());
+}
+
+#[test]
 fn combobox_filters_from_scroll_end_preserves_editor_modifiers_and_ime() {
     let mut rt = runtime();
     key(&mut rt, Key::Up, Mods::default());
@@ -300,5 +316,11 @@ fn a_combobox_announces_the_committed_choice_not_the_highlight() {
     assert!(committed.item_selected && !committed.item_cursor);
     assert!(!highlight.item_selected && highlight.item_cursor);
     assert!(disabled.disabled && !disabled.item_selected);
+    let listbox = opt("models-listbox");
+    let trigger = opt("models-value-trigger");
+    assert_eq!(trigger.controls.as_deref(), Some(listbox.path.as_str()));
+    let json = rt.a11y_json();
+    assert!(json.contains(&format!("\"controls\":\"{}\"", listbox.path)));
+    assert!(json.contains(&format!("\"activedescendant\":\"{}\"", highlight.path)));
 }
 

@@ -66,4 +66,3 @@ pub(super) fn width_control(k: &Kit, leading: bool, bind: Apply) -> El {
         .transition(Transition::none());
     bind(button)
 }
-

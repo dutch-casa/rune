@@ -90,7 +90,7 @@ export function viewport(canvas, callback, embedded) {
     const probe = document.createElement('div');
     probe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)';
     document.body.append(probe);
-    let inset = 0;
+    let inset = 0, disposed = false;
     // Set once the canvas was filling its parent, so a later clear restores 100% and a
     // content height in pixels (fit_content_height) is never rewritten.
     let managedFill = false;
@@ -158,8 +158,14 @@ export function viewport(canvas, callback, embedded) {
     window.addEventListener('blur', focus);
     document.addEventListener('visibilitychange', visibility);
     // Mount is called while Rust is installing the shell; enter it only after installation.
-    queueMicrotask(() => { update(); reduced(); focus(); visibility(); });
+    queueMicrotask(() => {
+        if (!disposed) update();
+        if (!disposed) reduced();
+        if (!disposed) focus();
+        if (!disposed) visibility();
+    });
     return () => {
+        disposed = true;
         viewports.delete(canvas);
         dprMedia?.removeEventListener('change', onDpr);
         window.visualViewport?.removeEventListener('resize', update);

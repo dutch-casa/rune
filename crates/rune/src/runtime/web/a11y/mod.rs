@@ -387,6 +387,12 @@ impl<S: 'static> Runtime<S> {
             node.a11y.pressed.hash(&mut hash);
             node.a11y.current.hash(&mut hash);
             node.a11y.multiselectable.hash(&mut hash);
+            node.a11y.sort.map(|direction| match direction {
+                crate::SortDirection::Ascending => 0u8,
+                crate::SortDirection::Descending => 1u8,
+            }).hash(&mut hash);
+            node.a11y.value_text.hash(&mut hash);
+            node.a11y.key_shortcuts.hash(&mut hash);
             if let Some(range) = node.a11y.range {
                 range.value.to_bits().hash(&mut hash);
                 range.min.to_bits().hash(&mut hash);
@@ -403,8 +409,9 @@ impl<S: 'static> Runtime<S> {
             node.window_drag.hash(&mut hash);
             node.help.hash(&mut hash);
             node.help_cut.hash(&mut hash);
-            node.elided.is_some().hash(&mut hash);
+            node.elided.hash(&mut hash);
             if let Some(spec) = node.text.as_deref() {
+                spec.style.size.to_bits().hash(&mut hash);
                 spec.redacted.hash(&mut hash);
                 let secret = spec.redacted || node.is_secure();
                 secret.hash(&mut hash);
@@ -555,6 +562,75 @@ mod tests {
         assert!(rt.web_a11y_action(&json!({"kind": "a11y_link", "path": link_path, "link": 0})));
         rt.frame(0.0);
         assert_eq!(rt.state.1, 1);
+    }
+
+    #[test]
+    fn semantic_metadata_changes_invalidate_the_mirror() {
+        struct State {
+            sort: Option<crate::SortDirection>,
+            value_text: &'static str,
+            shortcut: &'static str,
+            font_size: f32,
+        }
+        fn view(s: &State, _: &mut Cx<State>) -> El {
+            crate::col().size(300.0, 100.0)
+                .child(crate::el().key("header").role("columnheader").size(120.0, 30.0)
+                    .sort(s.sort).value_text(s.value_text).key_shortcuts(s.shortcut))
+                .child(crate::text("Caption").key("caption").size(120.0, 30.0)
+                    .font(crate::TextStyle::new(s.font_size, 400.0)))
+        }
+        let mut rt = Runtime::new(State {
+            sort: Some(crate::SortDirection::Ascending),
+            value_text: "One", shortcut: "A", font_size: 14.0,
+        }, view, (300.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let mut mirror = A11yMirror::default();
+        let next = |rt: &Runtime<State>, mirror: &mut A11yMirror, key: &str| -> Value {
+            let packet: Value = serde_json::from_str(rt.web_a11y(mirror).expect("metadata change delivers items")).unwrap();
+            packet["items"].as_array().unwrap().iter()
+                .find(|item| item["path"].as_str().is_some_and(|path| path.ends_with(key))).unwrap().clone()
+        };
+        let first = next(&rt, &mut mirror, "/header");
+        assert_eq!(first["sort"], "ascending");
+        rt.update(|s, _| s.sort = Some(crate::SortDirection::Descending));
+        rt.frame(0.0);
+        assert_eq!(next(&rt, &mut mirror, "/header")["sort"], "descending");
+        rt.update(|s, _| s.value_text = "Two");
+        rt.frame(0.0);
+        assert_eq!(next(&rt, &mut mirror, "/header")["value_text"], "Two");
+        rt.update(|s, _| s.shortcut = "B");
+        rt.frame(0.0);
+        assert_eq!(next(&rt, &mut mirror, "/header")["keyshortcuts"], "B");
+        rt.update(|s, _| { s.sort = None; s.value_text = ""; s.shortcut = ""; });
+        rt.frame(0.0);
+        let cleared = next(&rt, &mut mirror, "/header");
+        assert!(cleared.get("sort").is_none() && cleared.get("value_text").is_none() && cleared.get("keyshortcuts").is_none());
+        rt.update(|s, _| s.font_size = 20.0);
+        rt.frame(0.0);
+        assert_eq!(next(&rt, &mut mirror, "/caption")["font_size"], 20.0);
+        assert!(rt.web_a11y(&mut mirror).is_none(), "unchanged frame remains idle");
+    }
+
+    #[test]
+    fn changing_an_elision_updates_link_admission_in_the_mirror() {
+        fn view(width: &f32, _: &mut Cx<f32>) -> El {
+            crate::col().size(300.0, 100.0).child(
+                crate::text("one many many many two trailing trailing trailing")
+                    .key("truncated").font(crate::TextStyle::new(14.0, 400.0))
+                    .w(*width).truncate().link(crate::Link::new(19..22, "two"))
+            )
+        }
+        let mut rt = Runtime::new(64.0, view, (300.0, 100.0), Env::default());
+        rt.frame(0.0);
+        let mut mirror = A11yMirror::default();
+        let first: Value = serde_json::from_str(rt.web_a11y(&mut mirror).unwrap()).unwrap();
+        assert!(rt.nodes.iter().find(|n| n.key.as_deref() == Some("truncated")).unwrap().elided.is_some());
+        assert!(!first.to_string().contains("\"href\":\"two\""));
+        rt.update(|width, tx| { *width = 180.0; tx.instant(); });
+        rt.frame(0.0);
+        assert!(rt.nodes.iter().find(|n| n.key.as_deref() == Some("truncated")).unwrap().elided.is_some());
+        let changed: Value = serde_json::from_str(rt.web_a11y(&mut mirror).expect("changed elision delivers items")).unwrap();
+        assert!(changed["items"].to_string().contains("\"href\":\"two\""));
     }
 
     #[test]

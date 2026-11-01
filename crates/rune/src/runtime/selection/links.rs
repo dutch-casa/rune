@@ -531,7 +531,7 @@ impl<S: 'static> Runtime<S> {
                 let v = text.visible;
                 let (x0, y0) = (r[0].max(v[0]), r[1].max(v[1]));
                 let (x1, y1) = (r[2].min(v[0] + v[2]), r[3].min(v[1] + v[3]));
-                let words = spec.source_slice(h.start, h.end).map(str::to_owned);
+                let words = (!n.is_secure()).then(|| spec.source_slice(h.start, h.end).map(str::to_owned)).flatten();
                 elements.push(ElementInfo {
                     stuck: 0.0,
                     path: format!("{}#mark-{k}", n.path),
@@ -607,5 +607,76 @@ mod tests {
         assert_eq!(focused(&rt).as_deref(), Some("field"));
         key(&mut rt, Key::Escape);
         assert_eq!(focused(&rt).as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn focused_link_follows_its_id_when_declarations_move_or_disappear() {
+        struct State { reversed: bool, first: bool, open: bool, activated: Vec<String> }
+        fn view(s: &State, _: &mut Cx<State>) -> El {
+            let mut outside = text("First Second").key("outside");
+            if s.reversed { outside = outside.link(Link::new(6..12, "second")); }
+            if s.first { outside = outside.link(Link::new(0..5, "first")); }
+            if !s.reversed { outside = outside.link(Link::new(6..12, "second")); }
+            outside = outside.on_link(|s: &mut State, id, _| s.activated.push(id.to_owned()));
+            let mut root = col().size(300.0, 200.0).child(outside);
+            if s.open {
+                root = root.child(col().key("modal").size(100.0, 60.0).modal(true, |s: &mut State| s.open = false)
+                    .child(crate::el().key("inside").size(60.0, 30.0).focusable(true)));
+            }
+            root
+        }
+        let mut rt = Runtime::new(State { reversed: false, first: true, open: false, activated: Vec::new() },
+            view, (300.0, 200.0), Env::new(true, 1.0));
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        rt.key(KeyEvent { key: Key::Tab, mods: Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.focused_key().as_deref(), Some("first"));
+        rt.update(|s, _| s.reversed = true);
+        rt.frame(0.0);
+        assert_eq!(rt.focused_key().as_deref(), Some("first"));
+        rt.key(KeyEvent { key: Key::Enter, mods: Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.state.activated, ["first"]);
+        rt.update(|s, _| s.open = true);
+        rt.frame(0.0);
+        rt.update(|s, _| s.reversed = false);
+        rt.frame(0.0);
+        rt.update(|s, _| s.open = false);
+        rt.frame(0.0);
+        assert_eq!(rt.focused_key().as_deref(), Some("first"));
+        rt.update(|s, _| s.first = false);
+        rt.frame(0.0);
+        assert!(rt.focused_key().is_none(), "a removed link must not transfer focus to another action");
+        rt.key(KeyEvent { key: Key::Enter, mods: Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.state.activated, ["first"]);
+    }
+
+    #[test]
+    fn closing_a_modal_does_not_restore_a_disabled_opener() {
+        struct State { open: bool, disabled: bool }
+        fn view(s: &State, _: &mut Cx<State>) -> El {
+            let opener = crate::el().key("opener").size(80.0, 30.0).focusable(true).disabled(s.disabled);
+            let mut root = col().size(200.0, 120.0).child(opener);
+            if s.open {
+                root = root.child(col().key("modal").size(100.0, 60.0).modal(true, |s: &mut State| s.open = false)
+                    .child(crate::el().key("inside").size(60.0, 30.0).focusable(true)));
+            }
+            root
+        }
+        let mut rt = Runtime::new(State { open: false, disabled: false }, view, (200.0, 120.0), Env::default());
+        rt.set_tab_visits_controls(true);
+        rt.frame(0.0);
+        rt.key(KeyEvent { key: Key::Tab, mods: Mods::default() });
+        rt.frame(0.0);
+        assert_eq!(rt.focused_key().as_deref(), Some("opener"));
+        rt.update(|s, _| s.open = true);
+        rt.frame(0.0);
+        rt.update(|s, _| s.disabled = true);
+        rt.frame(0.0);
+        rt.update(|s, _| s.open = false);
+        rt.frame(0.0);
+        assert_ne!(rt.focused_key().as_deref(), Some("opener"));
     }
 }

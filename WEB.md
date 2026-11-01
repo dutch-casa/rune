@@ -217,7 +217,8 @@ Return can activate the window's default button. Disabled controls remain readab
 receive input. Browser actions are checked against the current scene.
 
 Inline links follow source order while retaining their action identities. Ordinary web URLs
-remain native anchors. Modal focus returns to the previous control or link on dismissal.
+remain native anchors. Activation goes through Rune's current `on_link` handler and admission
+checks. Modal focus returns to the previous control or link on dismissal.
 Focused virtual editors retain their native element across unmounts. Browsers without
 `Element.moveBefore` keep a composing field where it is until the composition ends, then
 apply the structural update.

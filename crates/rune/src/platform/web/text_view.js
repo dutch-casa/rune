@@ -240,7 +240,7 @@ function apply(h) {
     h.canvas.style.visibility = on ? 'hidden' : h.textView.canvasVisibility;
     if (!on) {
         h.textView.deferred = false;
-        h.textView.pageMarker = null;
+        h.textView.pagePending = false;
         h.a11y.style.cssText = h.textView.rootCss;
         eachEntry(h, entry => h.restoreOverlay(entry));
         h.refreshEntries();
@@ -277,12 +277,16 @@ export function holdScroll(h) {
 }
 
 function requestPage(h, edge) {
-    if (!showing(h) || h.disposed || h.textView.suppressScroll || !edge) return;
-    const nodes = h.a11y.querySelectorAll('[data-rune-node]');
-    const marker = `${edge}:${nodes[0]?.dataset.runeNode ?? ''}:${nodes[nodes.length - 1]?.dataset.runeNode ?? ''}`;
-    if (h.textView.pageMarker === marker) return;
-    h.textView.pageMarker = marker;
+    const view = h.textView;
+    if (!showing(h) || h.disposed || view.suppressScroll || view.pagePending || !edge) return false;
+    // A page can move the runtime scroll offset without changing the first or last DOM
+    // node (or even the mounted rows). Only suppress duplicate events during this sync.
+    view.pagePending = true;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (h.textView === view) view.pagePending = false;
+    }));
     h.send({ kind: 'text_view_page', edge });
+    return true;
 }
 
 function atEdge(h) {
@@ -305,7 +309,7 @@ export function attach(h) {
     h.a11y.setAttribute('data-rune-text-view', 'off');
     // After the mirror, so the page's controls are the earlier tab stops.
     h.a11y.after(control);
-    h.textView = { on: false, control, rootCss: h.a11y.style.cssText, canvasVisibility, fixed: !h.embedded, deferred: false, pageMarker: null };
+    h.textView = { on: false, control, rootCss: h.a11y.style.cssText, canvasVisibility, fixed: !h.embedded, deferred: false, pagePending: false };
     h.textView.resize = new ResizeObserver(() => trackViewport(h));
     h.textView.resize.observe(control);
     h.textView.resize.observe(h.canvas);
@@ -319,6 +323,40 @@ export function attach(h) {
         if (event.deltaY > 0 && atEnd) requestPage(h, 'end');
         else if (event.deltaY < 0 && atStart) requestPage(h, 'start');
     }, { passive: true });
+    // Native scrolling cancels pointer moves; passive touch events let another swipe page
+    // when the mounted DOM has not grown and therefore cannot scroll any farther yet.
+    let touch = null;
+    h.listen(h.a11y, 'touchstart', event => {
+        if (!showing(h) || event.touches.length !== 1 || event.target.closest?.('input, textarea')) {
+            touch = null;
+            return;
+        }
+        const point = event.touches[0];
+        touch = { id: point.identifier, y: point.clientY };
+    }, { passive: true });
+    h.listen(h.a11y, 'touchmove', event => {
+        if (!touch || !showing(h) || event.touches.length !== 1 || selectionInside(h)) { touch = null; return; }
+        const point = event.touches[0];
+        if (point.identifier !== touch.id) { touch = null; return; }
+        const delta = touch.y - point.clientY;
+        if (Math.abs(delta) < 12) return;
+        const root = h.a11y;
+        for (let element = event.target; element && element !== root; element = element.parentElement) {
+            const overflow = getComputedStyle(element).overflowY;
+            if ((overflow === 'auto' || overflow === 'scroll') && element.scrollHeight > element.clientHeight + 2
+                && (delta > 0 ? element.scrollTop + element.clientHeight < element.scrollHeight - 2 : element.scrollTop > 2)) {
+                touch.y = point.clientY;
+                return;
+            }
+        }
+        const atEnd = root.scrollTop + root.clientHeight >= root.scrollHeight - 2;
+        const atStart = root.scrollTop <= 2;
+        const edge = delta > 0 && atEnd ? 'end' : delta < 0 && atStart ? 'start' : null;
+        if (!edge || requestPage(h, edge)) touch.y = point.clientY;
+    }, { passive: true });
+    const endTouch = () => { touch = null; };
+    h.listen(h.a11y, 'touchend', endTouch, { passive: true });
+    h.listen(h.a11y, 'touchcancel', endTouch, { passive: true });
     h.listen(h.a11y, 'focusin', event => {
         if (!showing(h) || h.textView.suppressScroll) return;
         const node = event.target?.closest?.('[data-rune-node], [data-rune-link]');

@@ -70,8 +70,14 @@ export function mount(canvas, callback, embedded, fitHeight) {
     a11y.setAttribute('data-rune-a11y', '');
     a11y.setAttribute('role', 'document');
     a11y.tabIndex = -1;
+    let positionedParent = null;
     if (embedded && canvas.parentElement) {
-        if (getComputedStyle(canvas.parentElement).position === 'static') canvas.parentElement.style.position = 'relative';
+        const parent = canvas.parentElement;
+        if (getComputedStyle(parent).position === 'static') {
+            positionedParent = { element: parent, value: parent.style.getPropertyValue('position'),
+                priority: parent.style.getPropertyPriority('position') };
+            parent.style.position = 'relative';
+        }
         a11y.style.cssText = 'position:absolute;inset:0;overflow:clip;clip-path:inset(50%);pointer-events:none;z-index:1;direction:ltr;writing-mode:horizontal-tb;';
         canvas.after(a11y);
     } else {
@@ -81,7 +87,7 @@ export function mount(canvas, callback, embedded, fitHeight) {
     const h = { canvas, a11y, a11yNodes: new Map(), editors: new Map(), parked: null, context: null,
         bounds: new Map(), focused: null, modal: false, keys: new Map(), prefix: `rune-a11y-${++nextRoot}`, nextId: 0,
         copyText: '', listeners: [], syncing: false, disposed: false, embedded, fitHeight,
-        canvasAriaHidden: canvas.getAttribute('aria-hidden'), canvasTabIndex: canvas.getAttribute('tabindex'), mirrorActive: false };
+        positionedParent, canvasAriaHidden: canvas.getAttribute('aria-hidden'), canvasTabIndex: canvas.getAttribute('tabindex'), mirrorActive: false };
     h.send = event => {
         const message = JSON.stringify(event);
         if (h.syncing) queueMicrotask(() => { if (!h.disposed) callback(message); });
@@ -133,7 +139,6 @@ export function mount(canvas, callback, embedded, fitHeight) {
         const entry = h.a11yNodes.get(node.path);
         if (entry?.data.disabled) { event.preventDefault(); return; }
         if (node.link !== null) {
-            if (node.element.dataset.runeUrl === 'true') return;
             event.preventDefault();
             h.send({ kind: 'a11y_link', path: node.path, link: node.link });
             return;
@@ -610,6 +615,10 @@ export function destroy(h) {
     }
     if (h.mirrorActive && h.canvas.getAttribute('tabindex') === '-1') {
         attribute(h.canvas, 'tabindex', h.canvasTabIndex);
+    }
+    const parent = h.positionedParent;
+    if (parent && parent.element.style.position === 'relative' && !parent.element.style.getPropertyPriority('position')) {
+        parent.element.style.setProperty('position', parent.value, parent.priority);
     }
     h.a11y.remove();
 }

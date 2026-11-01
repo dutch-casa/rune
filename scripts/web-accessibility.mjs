@@ -102,7 +102,10 @@ export async function accessibilityProof(page, url, axNode) {
     const header = page.getByRole('columnheader', { name: 'Name', exact: true });
     await header.focus();
     await page.keyboard.press('Space');
-    await page.getByRole('columnheader', { name: 'Name, sorted ascending', exact: true }).waitFor();
+    await attribute(header, 'aria-sort', 'ascending');
+    await page.keyboard.press('Enter');
+    await attribute(header, 'aria-sort', 'descending');
+    assert.deepEqual(await grid.getByRole('gridcell').allTextContents(), ['Gamma', 'Beta', 'Alpha']);
 
     await open('tree');
     const tree = page.getByRole('tree', { name: 'Files', exact: true });
@@ -129,10 +132,12 @@ export async function accessibilityProof(page, url, axNode) {
     await attribute(headerToggle, 'aria-expanded', 'true');
     await page.keyboard.press('ArrowLeft');
     await attribute(headerToggle, 'aria-expanded', 'false');
-    assert.equal(await page.getByRole('listitem', { name: 'Alpha', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('option', { name: 'Alpha', exact: true }).count(), 0);
     await page.keyboard.press('Space');
     await attribute(headerToggle, 'aria-expanded', 'true');
-    await page.getByRole('listitem', { name: 'Alpha', exact: true }).waitFor();
+    const sidebarOption = page.getByRole('option', { name: 'Alpha', exact: true });
+    await sidebarOption.waitFor();
+    assert.equal(await sidebarOption.getAttribute('aria-selected'), 'true');
 
 
     await page.setViewportSize({ width: 1040, height: 760 });

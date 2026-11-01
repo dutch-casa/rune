@@ -227,7 +227,7 @@ impl Select {
         };
         let chevron: &'static Icon = if self.open { k.glyph.chevron_up } else { k.glyph.chevron_down };
         let mut trigger = row().key(anchor_key.clone()).role("combobox").placeholder_label(label.clone())
-            .expanded(self.open).disabled(disabled).center_y().focusable(!disabled).focus_ring(1.0, 0.0, c.border_focus);
+            .expanded(self.open && !disabled).disabled(disabled).center_y().focusable(!disabled).focus_ring(1.0, 0.0, c.border_focus);
         trigger = match self.appearance {
             SelectAppearance::Inline => {
                 let font = TextStyle { line_height: 16.0, ..k.ty.ui_medium };

@@ -443,6 +443,7 @@ fn secure_label_masks_reveals_conceals_and_never_leaks_plaintext() {
             root = root
                 .child(
                     text(SINGLE_SECRET)
+                        .text_highlight(crate::TextHighlight::new(0..SINGLE_SECRET.len(), crate::Color::WHITE))
                         .secure()
                         .revealed(s.revealed)
                         .selectable(true)
@@ -540,6 +541,9 @@ fn secure_label_masks_reveals_conceals_and_never_leaks_plaintext() {
     rt.update(|s, _| s.revealed = true);
     rt.frame(0.0);
     check_no_leak(&mut rt);
+    let marks: Vec<_> = rt.elements().into_iter().filter(|e| e.role == "mark").collect();
+    assert!(!marks.is_empty(), "the revealed highlighted text has an inspector mark");
+    assert!(marks.iter().all(|e| e.label.is_none() && e.name.is_none() && e.text.is_none()));
 
     let n_single = rt.nodes.iter().find(|n| n.key.as_deref() == Some("single")).unwrap();
     assert_eq!(n_single.text.as_ref().unwrap().content, SINGLE_SECRET);

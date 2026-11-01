@@ -345,6 +345,40 @@ fn shrinking_rows_under_a_selection_stays_consistent() {
     assert_eq!(rt.state.table.selected_len(), 5);
 }
 
+#[test]
+fn reversed_column_bounds_keep_the_resize_range_and_keyboard_steps_valid() {
+    fn view(s: &App, _: &mut Cx<App>) -> El {
+        let k = Kit::neutral(true);
+        Table::new(|s: &App| &s.table, |s: &mut App| &mut s.table, |s: &App| s.files.len(), |s: &App, i| Cow::Borrowed(s.files[i].id.as_str()))
+            .column(TableColumn::new("name", "Name").min(120.0).max(60.0))
+            .build(s, &k)
+            .size(300.0, 200.0)
+    }
+    let mut app = App::new(0, false);
+    app.table.set_column_width("name", f32::NAN);
+    let mut rt = Runtime::new(app, view, (300.0, 200.0), Env::new(true, 1.0));
+    rt.frame(0.0);
+    let handle = find(&rt, |e| e.label.as_deref() == Some("Resize Name")).remove(0);
+    assert_eq!(handle.range, Some(rune::ValueRange { value: 120.0, min: 120.0, max: 120.0 }));
+    for _ in 0..4 {
+        press(&mut rt, Key::Tab);
+        if rt.elements().iter().any(|e| e.focused && e.key.as_deref() == Some("resize")) { break; }
+    }
+    assert!(rt.elements().iter().any(|e| e.focused && e.key.as_deref() == Some("resize")));
+    press(&mut rt, Key::Right);
+    assert_eq!(rt.state.table.column_width("name"), Some(120.0));
+    press(&mut rt, Key::End);
+    assert_eq!(rt.state.table.column_width("name"), Some(120.0));
+}
+
+#[test]
+fn a_non_finite_column_minimum_does_not_panic_while_building_the_header() {
+    let app = App::new(0, false);
+    let _ = Table::new(|s: &App| &s.table, |s: &mut App| &mut s.table, |s: &App| s.files.len(), |s: &App, i| Cow::Borrowed(s.files[i].id.as_str()))
+        .column(TableColumn::new("name", "Name").min(f32::INFINITY))
+        .build(&app, &Kit::neutral(true));
+}
+
 // Benchmark ---------------------------------------------------------------------------------
 
 fn percentile(v: &mut [f64], p: f64) -> f64 {

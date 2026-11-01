@@ -16,7 +16,7 @@ const TYPE_SELECT_PAUSE: f64 = 1.0;
 #[derive(Clone)]
 pub(super) struct FocusTarget {
     path: String,
-    link: Option<usize>,
+    link: Option<(usize, String)>,
 }
 
 /// Whether `ev` navigates (Tab, an arrow, Home, End, Page Up or Page Down, unmodified but for
@@ -176,20 +176,35 @@ impl<S: 'static> Runtime<S> {
         crate::el::Outline { width: 3.0, offset: 0.0, color: self.system_accent.focus(self.env.system_dark) }
     }
     pub(super) fn focus_target(&self) -> Option<FocusTarget> {
-        Some(FocusTarget {
-            path: self.focused.clone()?,
-            link: self.focused_index().and_then(|i| self.focused_link_index(i)),
-        })
+        let link = self.focused_index().and_then(|i| {
+            let k = self.focused_link_index(i)?;
+            Some((k, self.nodes[i].text.as_ref()?.links.get(k)?.id.clone()))
+        });
+        Some(FocusTarget { path: self.focused.clone()?, link })
     }
 
-    fn restore_focus_target(&mut self, target: Option<FocusTarget>) {
-        let (path, link) = target.map_or((None, None), |target| (Some(target.path), target.link));
-        self.set_focus(path, self.keyboard_focus);
-        if let Some(i) = self.focused_index()
-            && let Some(k) = link.filter(|&k| self.link_eligible(i, k))
-        {
-            self.focused_link = Some(k);
+    fn resolve_focus_link(&self, i: usize, old_index: usize, id: &str) -> Option<usize> {
+        let spec = self.nodes[i].text.as_ref()?;
+        if spec.links.get(old_index).is_some_and(|link| link.id == id) && self.link_eligible(i, old_index) {
+            return Some(old_index);
         }
+        let mut matches = spec.links.iter().enumerate()
+            .filter(|(k, link)| link.id == id && self.link_eligible(i, *k))
+            .map(|(k, _)| k);
+        let found = matches.next()?;
+        matches.next().is_none().then_some(found)
+    }
+
+    fn restore_focus_target(&mut self, target: Option<FocusTarget>) -> bool {
+        let Some(target) = target else { return self.set_focus(None, self.keyboard_focus) };
+        let Some(i) = self.live(&target.path).filter(|&i| self.can_focus(i) && !self.subtree_unmounted(i)) else {
+            return self.set_focus(None, self.keyboard_focus);
+        };
+        let link = target.link.as_ref().and_then(|(index, id)| self.resolve_focus_link(i, *index, id));
+        if target.link.is_some() && link.is_none() { return self.set_focus(None, self.keyboard_focus); }
+        let changed = self.set_focus(Some(target.path), self.keyboard_focus);
+        if let Some(k) = link { self.focused_link = Some(k); }
+        changed
     }
 
     pub(super) fn set_focus(&mut self, mut path: Option<String>, keyboard: bool) -> bool {
@@ -303,12 +318,24 @@ impl<S: 'static> Runtime<S> {
                 && (nodes[j].focus.enabled || nodes[j].input.as_ref().is_some_and(|i| i.access.is_none() || i.edit.focused)))
                 || self.virtual_inputs.get(p).is_some_and(|i| i.edit.focused)))
             .or_else(|| requested.into_iter().next().or_else(|| virtual_req().min_by_key(|&(p, _)| p)).map(|(p, _)| p.to_owned()));
+        // Preserve the focused link's identity when declarations move during a commit.
+        let restore_link = self.focus_before_commit.clone().filter(|target| {
+            target.link.is_some() && next.as_deref() == Some(target.path.as_str())
+        });
         // State may have deleted a row. Only the new view's accessors are valid now.
         // Use the same focus path as input events, then restore the old presentation
         // tree so apply can retain its exit visuals.
         std::mem::swap(&mut self.nodes, nodes);
         self.nodes_replaced();
-        let changed = self.set_focus(next, self.keyboard_focus);
+        let mut changed = self.set_focus(next, self.keyboard_focus);
+        if let Some(target) = restore_link {
+            let link = self.focused_index().and_then(|i| {
+                let (index, id) = target.link.as_ref()?;
+                self.resolve_focus_link(i, *index, id)
+            });
+            if let Some(k) = link { self.focused_link = Some(k); }
+            else { changed |= self.set_focus(None, self.keyboard_focus); }
+        }
         std::mem::swap(&mut self.nodes, nodes);
         self.nodes_replaced();
         if self.input_click.dragging_path().is_some_and(|p| !nodes.iter().any(|n| n.path == p && !n.inert && !n.disabled && n.input.is_some())) {

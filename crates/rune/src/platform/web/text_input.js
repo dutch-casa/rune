@@ -172,4 +172,3 @@ export function sync(h, key, text, base, anchor, focus, secure) {
     const entry = h.editors.get(key);
     if (h.context && entry?.editor.secure === secure) entry.editor.sync(h.context.text, base, anchor, focus);
 }
-

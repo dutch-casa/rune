@@ -95,17 +95,19 @@ fn resize_handle<S: 'static>(c: TableColumn, state: &TableState, get_mut: fn(&mu
     let reset = c.id.clone();
     let step = c.clone();
     let limit = c.clone();
-    let published_max = if c.max.is_finite() { c.max } else { 10_000.0_f32.max(c.min) };
+    let published_max = if c.max.is_finite() { c.max.max(c.min) } else { 10_000.0_f32.max(c.min) };
     let width = state.column_width(&c.id).or_else(|| state.laid_out.get(&c.id).copied()).unwrap_or(c.min);
-    let value = if width.is_finite() { width.clamp(c.min, published_max) } else { c.min };
     let line = el().key("line").w(1.0).h_full().fill(if last { Color::TRANSPARENT } else { rule });
-    row()
+    let mut handle = row()
         .key("resize")
         .role("separator")
         .orientation(Orientation::Vertical)
-        .label(format!("Resize {}", c.title))
-        .value_range(value, c.min..=published_max)
-        .value_text(format!("{value:.0} points"))
+        .label(format!("Resize {}", c.title));
+    if c.min.is_finite() && published_max.is_finite() {
+        let value = if width.is_finite() { width.clamp(c.min, published_max) } else { c.min };
+        handle = handle.value_range(value, c.min..=published_max).value_text(format!("{value:.0} points"));
+    }
+    handle
         .pin(None, Some(6.0), Some(-4.0), Some(6.0))
         .w(9.0)
         .justify_center()
@@ -113,13 +115,13 @@ fn resize_handle<S: 'static>(c: TableColumn, state: &TableState, get_mut: fn(&mu
         .on_step(move |s: &mut S, delta, tx: &mut Tx| {
             tx.instant();
             let st = get_mut(s);
-            let current = st.column_width(&step.id).or_else(|| st.laid_out.get(&step.id).copied()).unwrap_or(step.min);
-            let max = if step.max.is_finite() { step.max } else { 10_000.0_f32.max(step.min) };
+            let current = step.clamp(st.column_width(&step.id).or_else(|| st.laid_out.get(&step.id).copied()).unwrap_or(step.min));
+            let max = if step.max.is_finite() { step.max.max(step.min) } else { 10_000.0_f32.max(step.min) };
             st.set_column_width(step.id.clone(), (current + delta as f32 * KEY_STEP).clamp(step.min, max));
         })
         .on_step_limit(move |s: &mut S, to_max, tx: &mut Tx| {
             tx.instant();
-            let max = if limit.max.is_finite() { limit.max } else { 10_000.0_f32.max(limit.min) };
+            let max = if limit.max.is_finite() { limit.max.max(limit.min) } else { 10_000.0_f32.max(limit.min) };
             get_mut(s).set_column_width(limit.id.clone(), if to_max { max } else { limit.min });
         })
         .on_drag(move |s: &mut S, d: &mut Drag, _tx: &mut Tx| {

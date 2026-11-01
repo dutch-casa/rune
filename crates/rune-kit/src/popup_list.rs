@@ -309,6 +309,10 @@ impl<S: 'static> PopupList<S> {
         }
         col()
             .key("list")
+            // A disabled row lets input pass through; the list, not the outside scrim,
+            // owns presses on it and on the empty state.
+            .on_press(|_: &mut S| {})
+            .role("none")
             .preserve_focus_on_press(true)
             .w_full()
             .shrink()

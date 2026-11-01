@@ -130,6 +130,7 @@ pub struct Popover {
     padding: f32,
     close: Acts,
     dismiss: Option<El>,
+    control: Option<String>,
     dismiss_key: Option<Rc<dyn Fn(El) -> El>>,
 }
 
@@ -143,6 +144,7 @@ impl Popover {
             body: Vec::new(),
             open: false,
             placement: Placement::Bottom,
+            control: None,
             gutter: 4.0,
             padding: 12.0,
             close: Acts::default(),
@@ -184,6 +186,10 @@ impl Popover {
         self.gutter = g;
         self
     }
+    pub(crate) fn controls(mut self, key: impl Into<String>) -> Self {
+        self.control = Some(key.into());
+        self
+    }
     /// Close requests: the close button, presses outside, and Escape while focus is inside.
     /// The surface stays non-modal, so Tab can still leave it.
     pub fn on_close<S: 'static>(mut self, f: impl Fn(&mut S) + Clone + 'static) -> Self {
@@ -212,7 +218,8 @@ impl Popover {
         let dismiss_key = self.dismiss_key.clone();
         // The surface stays a group, not a dialog, so it does not take focus on open.
         // The trigger still reports whether it is open and which node it controls.
-        let inner = self.trigger.map(|t| t.expanded(self.open).controls(content_key.clone()));
+        let control = self.control.unwrap_or_else(|| content_key.clone());
+        let inner = self.trigger.map(|t| t.expanded(self.open).controls(control));
         let mut trigger = row().key(anchor_key.clone()).children(inner);
         if !self.open {
             return trigger;

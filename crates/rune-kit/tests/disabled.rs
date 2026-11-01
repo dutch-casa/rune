@@ -53,6 +53,34 @@ fn disabled_controls_produce_no_layer_scopes() {
     }
 }
 
+#[test]
+fn disabled_text_controls_do_not_intercept_presses_on_content_behind_them() {
+    struct S { case: usize, edit: TextEdit, presses: usize }
+    fn view(s: &S, _: &mut Cx<S>) -> El {
+        let k = Kit::neutral(true);
+        let field = match s.case {
+            0 => TextInput::new(&s.edit).on_edit(|s: &mut S| &mut s.edit).disabled(true).build(&k),
+            1 => TextArea::new(&s.edit).on_edit(|s: &mut S| &mut s.edit).disabled(true).build(&k),
+            _ => TextField::new("Name", &s.edit).on_edit(|s: &mut S| &mut s.edit).disabled(true).build(&k),
+        };
+        el().size(300.0, 120.0)
+            .child(el().size(300.0, 120.0).on_press(|s: &mut S| s.presses += 1))
+            .child(field.key("disabled-field").absolute(0.0, 0.0))
+    }
+    for case in 0..3 {
+        let mut rt = Runtime::new(S { case, edit: TextEdit::new("Keep"), presses: 0 }, view, (300.0, 120.0), Env::new(true, 1.0));
+        rt.frame(0.0);
+        let field = rt.elements().into_iter().find(|e| e.key.as_deref() == Some("disabled-field")).unwrap();
+        assert!(field.disabled, "case {case}: the shell and its subtree are disabled");
+        let (x, y) = (field.rect[0] + field.rect[2] / 2.0, field.rect[1] + 5.0);
+        rt.pointer_down(x, y);
+        rt.pointer_up(x, y);
+        rt.frame(0.0);
+        assert_eq!(rt.state.presses, 1, "case {case}: press reaches the control behind");
+        assert_eq!(rt.state.edit.text, "Keep");
+    }
+}
+
 /// A disabled contrast button on the page, as the browser draws `opacity: 0.4` over it: 40% of
 /// the fill under its sheen, and none of its shadows through it.
 #[test]
