@@ -92,20 +92,38 @@ impl Pixels {
 
 /// Where an image of `size` texels draws in `rect` ([x, y, w, h], device pixels) and which window
 /// of it shows, as fractions [x0, y0, x1, y1]. `None` stretches; `Fit` letterboxes on whole pixels;
-/// `Fill` keeps the rect and crops the centred overflow.
-pub(crate) fn fit(fit: Option<crate::SurfaceFit>, rect: [f32; 4], size: (u32, u32)) -> ([f32; 4], [f32; 4]) {
+/// `Fill` keeps the rect and crops the overflow. Spare space and overflow split by `place`'s
+/// anchor (centred by default); an unscaled place draws one texel per pixel and crops or leaves
+/// the rest empty.
+pub(crate) fn fit(fit: Option<crate::SurfaceFit>, place: crate::native_surface::place::SurfacePlace, rect: [f32; 4], size: (u32, u32)) -> ([f32; 4], [f32; 4]) {
     let whole = [0.0, 0.0, 1.0, 1.0];
     let [x, y, w, h] = rect;
     let (iw, ih) = (size.0 as f32, size.1 as f32);
     if fit.is_none() || iw <= 0.0 || ih <= 0.0 || w <= 0.0 || h <= 0.0 { return (rect, whole); }
+    let [kx, ky] = place.share();
+    if place.unscaled {
+        let (dw, dh) = (iw.min(w), ih.min(h));
+        let (sx, sy) = (dw / iw, dh / ih);
+        let ((x0, x1), (y0, y1)) = (window(sx, kx), window(sy, ky));
+        let at = [x + ((w - dw) * kx).round(), y + ((h - dh) * ky).round(), dw, dh];
+        return (at, [x0, y0, x1, y1]);
+    }
     if fit == Some(crate::SurfaceFit::Fit) {
         let k = (w / iw).min(h / ih);
         let (dw, dh) = ((iw * k).round().clamp(1.0, w), (ih * k).round().clamp(1.0, h));
-        return ([x + ((w - dw) * 0.5).round(), y + ((h - dh) * 0.5).round(), dw, dh], whole);
+        return ([x + ((w - dw) * kx).round(), y + ((h - dh) * ky).round(), dw, dh], whole);
     }
     let k = (w / iw).max(h / ih);
     let (sx, sy) = (w / (iw * k), h / (ih * k));
-    (rect, [(1.0 - sx) * 0.5, (1.0 - sy) * 0.5, (1.0 + sx) * 0.5, (1.0 + sy) * 0.5])
+    let ((x0, x1), (y0, y1)) = (window(sx, kx), window(sy, ky));
+    (rect, [x0, y0, x1, y1])
+}
+
+/// The visible fraction `[a, b]` of an axis when `span` of it shows and `share` of the hidden part lies before.
+fn window(span: f32, share: f32) -> (f32, f32) {
+    if share == 0.5 { return ((1.0 - span) * 0.5, (1.0 + span) * 0.5); }
+    let a = (1.0 - span) * share;
+    (a, a + span)
 }
 
 struct Slot {
@@ -529,13 +547,14 @@ mod tests {
     #[test]
     fn fit_letterboxes_on_whole_pixels_and_fill_crops_the_centre() {
         use crate::SurfaceFit::{Fill, Fit};
+        const C: crate::native_surface::place::SurfacePlace = crate::native_surface::place::SurfacePlace::CENTRED;
         let rect = [10.0, 20.0, 40.0, 40.0];
-        assert_eq!(fit(None, rect, (80, 20)), (rect, [0.0, 0.0, 1.0, 1.0]));
-        assert_eq!(fit(Some(Fit), rect, (80, 20)), ([10.0, 35.0, 40.0, 10.0], [0.0, 0.0, 1.0, 1.0]));
-        assert_eq!(fit(Some(Fit), rect, (20, 80)).0, [25.0, 20.0, 10.0, 40.0]);
-        assert_eq!(fit(Some(Fill), rect, (80, 20)), (rect, [0.375, 0.0, 0.625, 1.0]));
-        assert_eq!(fit(Some(Fill), rect, (40, 40)), (rect, [0.0, 0.0, 1.0, 1.0]));
-        assert_eq!(fit(Some(Fit), rect, (0, 0)).0, rect, "an empty image keeps the rect");
+        assert_eq!(fit(None, C, rect, (80, 20)), (rect, [0.0, 0.0, 1.0, 1.0]));
+        assert_eq!(fit(Some(Fit), C, rect, (80, 20)), ([10.0, 35.0, 40.0, 10.0], [0.0, 0.0, 1.0, 1.0]));
+        assert_eq!(fit(Some(Fit), C, rect, (20, 80)).0, [25.0, 20.0, 10.0, 40.0]);
+        assert_eq!(fit(Some(Fill), C, rect, (80, 20)), (rect, [0.375, 0.0, 0.625, 1.0]));
+        assert_eq!(fit(Some(Fill), C, rect, (40, 40)), (rect, [0.0, 0.0, 1.0, 1.0]));
+        assert_eq!(fit(Some(Fit), C, rect, (0, 0)).0, rect, "an empty image keeps the rect");
     }
 
     #[test]

@@ -982,7 +982,7 @@ impl<S: 'static> Runtime<S> {
                             video_signature = crate::video::fold(video_signature, pulled.generation, surface.key());
                         }
                         self.surfaces.push(crate::native_surface::SurfaceDraw {
-                            surface: surface.clone(), fit: *fit, before_instance: self.instances.len() as u32,
+                            surface: surface.placed(n.vis.surface_place), fit: *fit, before_instance: self.instances.len() as u32,
                             rect: [r[0], r[1], w, h], radii, clip, fade: crate::render::pack_fade(fade, fade_origin, clip), opacity: o,
                         });
                     }
@@ -1068,7 +1068,7 @@ impl<S: 'static> Runtime<S> {
                     push_shape(&mut self.instances, shape, [r[0], r[1]], k, k_px, o, srgb, clip, fade);
                 }
                 if let Some(pixels) = &n.vis.pixels {
-                    let (rect, crop) = crate::pixels::fit(n.vis.pixels_fit, [r[0], r[1], w, h], pixels.size());
+                    let (rect, crop) = crate::pixels::fit(n.vis.pixels_fit, n.vis.surface_place, [r[0], r[1], w, h], pixels.size());
                     let span = [crop[2] - crop[0], crop[3] - crop[1]];
                     // The mip covers the whole image's drawn size, not just its visible window.
                     if let Some(image) = self.images.place(pixels, [rect[2] / span[0], rect[3] / span[1]]) {
