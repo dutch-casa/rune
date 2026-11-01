@@ -277,8 +277,7 @@ fn draw_in(dir: Dir, p: &Parts, fonts: Fonts, spacing: &Spacing, paint: &Diagram
         let at = [p0[0] + TITLE_INSET[0], p0[1] + TITLE_INSET[1]];
         c.label_at(&titles[i], at, fonts.title, paint.muted, Align::Start);
         if !titles[i].text.is_empty() {
-            let back = (0..chain_of(Some(i)).len()).fold(paint.surface, |bg, _| over_color(paint.cluster_fill, bg));
-            title_boxes.push((title_box(&titles[i], at), back));
+            title_boxes.push(title_box(&titles[i], at));
         }
     }
 
@@ -288,7 +287,7 @@ fn draw_in(dir: Dir, p: &Parts, fonts: Fonts, spacing: &Spacing, paint: &Diagram
     let boxes = labels.iter().map(|l| l.as_ref().map(|m| ax(label_box(m)))).collect();
     let on_cluster: Vec<[Option<usize>; 2]> = edges.iter().map(|e| e.on_cluster).collect();
     let ctx = Ctx::new(&placed, &sizes, nodes.iter().map(DrawNode::shape).collect(), boxes, across, ends)
-        .titles(title_boxes.iter().map(|t| t.0))
+        .titles(title_boxes.iter().copied())
         .cluster_ends(&on_cluster);
     // A label pill takes the colour of the innermost subgraph holding both its ends.
     let backs: Vec<Color> = edges
