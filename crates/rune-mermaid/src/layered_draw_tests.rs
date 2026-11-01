@@ -138,3 +138,18 @@ fn a_chart_that_fits_its_card_keeps_its_direction() {
     assert!(!tall(&canvas(CHAT, &wide)), "LR stays LR with room");
     assert!(tall(&canvas(CHAT, &narrow)), "LR turns down when it can't fit");
 }
+
+#[test]
+fn an_edge_runs_straight_through_its_label() {
+    for width in [420.0, 680.0, 2000.0] {
+        let c = canvas(CHAT, &paint_at(false, width));
+        for text in ["newest turn is a question", "newest turn is a result you haven't read"] {
+            let r = rect(label(&c, text));
+            let off = |p: [f32; 2]| (r[0] - p[0]).max(p[0] - r[2]).max(r[1] - p[1]).max(p[1] - r[3]);
+            let ends: Vec<[f32; 2]> = lines(&c).flat_map(|l| [l[0], l[l.len() - 1]]).filter(|&p| off(p) > -0.5 && off(p) < 10.0).collect();
+            assert_eq!(ends.len(), 2, "the line stops either side of {text:?} (width {width}): {ends:?}");
+            let (a, b) = (ends[0], ends[1]);
+            assert!((a[0] - b[0]).abs() < 1.0 || (a[1] - b[1]).abs() < 1.0, "the line jogs through {text:?} (width {width}): {a:?} to {b:?}");
+        }
+    }
+}

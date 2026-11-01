@@ -208,8 +208,15 @@ impl<'a> Ctx<'a> {
         let mut anchors = self.anchors(i, &path, twin, None);
         let mut at = label;
         if let (Some(l), Some(size), false) = (label, self.labels[i], twin) {
-            let on = along(&curve(&anchors), l[1]).map(|x| [x, l[1]]);
-            match on.filter(|&p| self.label_fits(i, p, size)) {
+            // The label sits on the line where it crosses the label's rank, if the line runs
+            // straight through it there; a slanted line would jog across the gap.
+            let line = curve(&anchors);
+            let upright = |p: &[f32; 2]| match (along(&line, p[1] - size[1] / 2.0), along(&line, p[1] + size[1] / 2.0)) {
+                (Some(a), Some(b)) => (a - b).abs() < 1.0,
+                _ => false,
+            };
+            let on = along(&line, l[1]).map(|x| [x, l[1]]);
+            match on.filter(|p| upright(p) && self.label_fits(i, *p, size)) {
                 Some(p) => at = Some(p),
                 None => {
                     anchors = self.anchors(i, &path, false, label_at);
