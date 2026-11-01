@@ -25,7 +25,7 @@ impl SpanMap {
         self.0.push((src, out));
     }
 
-    fn truncate_out(&mut self, len: usize) {
+    pub(super) fn truncate_out(&mut self, len: usize) {
         self.0.retain_mut(|(src, out)| {
             if out.start >= len {
                 return false;
@@ -116,7 +116,32 @@ pub(super) struct Builder {
     autolink: bool,
     image_starts: Vec<usize>,
     image_ranges: Vec<(usize, usize)>,
+    tail: Tail,
 }
+
+/// What the source ends inside, from the last block-level start the walk met.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Tail {
+    None,
+    /// A code or HTML block: its text is literal.
+    Code,
+    /// Inline text from this source byte on (a paragraph, a tight list item, a heading or a
+    /// table cell).
+    Inline(usize, Scope),
+}
+
+/// How far an inline run can reach.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Scope {
+    /// Across lines, until a blank one.
+    Para,
+    /// To the end of its line (a heading).
+    Line,
+    /// To the next `|` or the end of its line.
+    Cell,
+}
+
+pub(super) type ParsedDoc = (Vec<Block>, Vec<Source>, Vec<Option<(bool, usize)>>, Vec<Cut>, Vec<usize>, Vec<BlockMap>);
 
 /// Where a top-level block starts: the start of its first line, and how many top-level blocks,
 /// [`Source`]s and list items come before it.
@@ -357,7 +382,12 @@ pub fn parse(src: &str) -> Vec<Block> {
     parse_doc(src, true).0
 }
 
-pub(super) fn parse_doc(src: &str, autolink: bool) -> (Vec<Block>, Vec<Source>, Vec<Option<(bool, usize)>>, Vec<Cut>, Vec<usize>, Vec<BlockMap>) {
+pub(super) fn parse_doc(src: &str, autolink: bool) -> ParsedDoc {
+    parse_doc_tail(src, autolink).0
+}
+
+/// [`parse_doc`], and what the source ends inside.
+pub(super) fn parse_doc_tail(src: &str, autolink: bool) -> (ParsedDoc, Tail) {
     let mut b = Builder {
         stack: vec![(Container::Root, Vec::new(), Vec::new())],
         inline: None,
@@ -371,6 +401,7 @@ pub(super) fn parse_doc(src: &str, autolink: bool) -> (Vec<Block>, Vec<Source>, 
         autolink,
         image_starts: Vec::new(),
         image_ranges: Vec::new(),
+        tail: Tail::None,
     };
     let opts = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     for (ev, range) in Parser::new_ext(src, opts).into_offset_iter() {
@@ -386,6 +417,15 @@ pub(super) fn parse_doc(src: &str, autolink: bool) -> (Vec<Block>, Vec<Source>, 
             b.root_start = at;
             b.cuts.push(Cut { at, blocks: b.stack[0].1.len(), sources: b.sources.len(), tasks: b.tasks.len() });
         }
+        b.tail = match &ev {
+            Event::Start(Tag::Paragraph | Tag::Item) => Tail::Inline(range.start, Scope::Para),
+            Event::Start(Tag::Heading { .. }) => Tail::Inline(range.start, Scope::Line),
+            // A row short of cells is padded with empty ones after its last.
+            Event::Start(Tag::TableCell) if !range.is_empty() => Tail::Inline(range.start, Scope::Cell),
+            Event::Start(Tag::CodeBlock(_) | Tag::HtmlBlock) => Tail::Code,
+            Event::Start(Tag::Table(_)) | Event::Rule => Tail::None,
+            _ => b.tail,
+        };
         match ev {
             Event::Start(tag) => match tag {
                 Tag::Paragraph => {
@@ -572,7 +612,7 @@ pub(super) fn parse_doc(src: &str, autolink: bool) -> (Vec<Block>, Vec<Source>, 
         *blocks.last_mut().unwrap() = Block::Table(t);
         *maps.last_mut().unwrap() = map;
     }
-    (blocks, b.sources, b.tasks, b.cuts, b.block_starts, maps)
+    ((blocks, b.sources, b.tasks, b.cuts, b.block_starts, maps), b.tail)
 }
 
 fn code_block(text: String, fence: &Fence) -> Block {

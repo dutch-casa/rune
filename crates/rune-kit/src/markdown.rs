@@ -29,7 +29,8 @@
 //! last row has no newline yet and [`Markdown::streaming`] is on), the row still arriving doesn't
 //! widen columns, so columns move at most once per finished row. Otherwise the text is taken as
 //! whole, and a table ending it sizes to every row. A trailing `| a | b |` line is already drawn
-//! as the header it is about to become.
+//! as the header it is about to become; while streaming, a trailing `| a` line that can't be one
+//! yet draws nothing until it is a table or the next line shows it isn't.
 //!
 //! **Diagrams** (`mermaid` feature) draw from their complete lines while the fence is still
 //! open, and the source shows as a code block only for what the subset doesn't cover. With
@@ -55,6 +56,7 @@ mod highlight;
 mod links;
 mod parser;
 mod render;
+mod stream;
 mod style;
 mod table;
 
@@ -71,11 +73,12 @@ pub use highlight::{Highlight, HighlightItem};
 pub use parser::parse;
 
 use autolink::autolink_inline;
-use cache::doc_cached;
+use cache::{doc_cached, stream_cached};
 #[cfg(test)]
 use cache::{CACHE, PARSES};
-use parser::{BlockMap, Cut, PAD, Source, SpanMap, parse_doc};
+use parser::{BlockMap, Cut, PAD, ParsedDoc, Source, SpanMap, parse_doc};
 use render::{Renderer, hash_of, rendered_keys, source_copy};
+use stream::parse_streaming;
 
 /// An inline style run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -214,7 +217,10 @@ impl Markdown {
     }
     /// The source is still arriving: a table's last row, with no newline after it yet, is left
     /// out of the column widths until it ends, and a diagram brings in each node and edge as
-    /// its line arrives. Off, the text is whole.
+    /// its line arrives. The tail draws as what it's about to become: an emphasis, strike or
+    /// code span still open draws styled (never its markers), markers at the very end wait for
+    /// the next character, and a trailing `| …` line waits until it's a table or isn't. Off,
+    /// the text is whole.
     pub fn streaming(mut self, on: bool) -> Self {
         self.streaming = on;
         self
@@ -306,11 +312,13 @@ impl Markdown {
     /// Builds with `style`, for apps without a [`Kit`] (see [`MarkdownStyle::neutral`] and
     /// [`MarkdownStyle::from_seed`]).
     pub fn render(self, style: &MarkdownStyle) -> El {
-        let (blocks, sources, tasks, starts, maps) = if self.autolink {
-            doc_cached(&self.src)
-        } else {
-            let (b, s, t, _, st, m) = parse_doc(&self.src, false);
-            (Rc::new(b), s.into(), t.into(), st.into(), m.into())
+        let (blocks, sources, tasks, starts, maps) = match (self.autolink, self.streaming) {
+            (true, false) => doc_cached(&self.src),
+            (true, true) => stream_cached(&self.src),
+            (false, streaming) => {
+                let (b, s, t, _, st, m) = if streaming { parse_streaming(&self.src, false) } else { parse_doc(&self.src, false) };
+                (Rc::new(b), s.into(), t.into(), st.into(), m.into())
+            }
         };
         let keys = if self.block_keys.is_empty() { Vec::new() } else {
             starts.iter().map(|at| self.block_keys.iter().find(|(offset, _)| offset == at)
