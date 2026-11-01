@@ -366,6 +366,26 @@ pub fn layout(g: &Graph, sp: &Spacing) -> Option<Placed> {
         }
         y[r] = at;
     }
+    // Upright bends: a rank gap that an edge crosses far sideways grows (by at most another rank
+    // gap) until the edge's S, from the near side of one end to the near side of the other, is
+    // as tall as it is wide, so it leaves nodes and subgraph borders steeply instead of squeezed.
+    let drawn = |v: usize| matches!(nodes[v].kind, Kind::Real(_) | Kind::Dummy(_, true));
+    // How far a port can slide toward the other end: a node's ports spread across its middle.
+    let slide = |v: usize| if matches!(nodes[v].kind, Kind::Real(_)) { nodes[v].size[0] / 4.0 } else { 0.0 };
+    let base = y.clone();
+    let mut grown = 0.0;
+    for r in 1..ranks {
+        let mut need = 0.0f32;
+        for &v in layers[r].iter().filter(|&&v| drawn(v)) {
+            for &u in nodes[v].preds.iter().filter(|&&u| drawn(u)) {
+                let dx = (x[u] - x[v]).abs() - slide(u) - slide(v);
+                let dy = (base[r] - nodes[v].size[1] / 2.0) - (base[r - 1] + nodes[u].size[1] / 2.0);
+                need = need.max(dx - dy);
+            }
+        }
+        grown += need.clamp(0.0, sp.rank);
+        y[r] += grown;
+    }
 
     // 7. Cluster boxes from their members (nested ones included).
     let mut depth_order: Vec<usize> = (0..g.clusters.len()).collect();

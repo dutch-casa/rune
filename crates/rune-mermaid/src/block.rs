@@ -155,7 +155,7 @@ impl Parser {
         let ends: Vec<usize> = refs.into_iter().map(|r| self.add(r)).collect::<Option<_>>()?;
         for (l, w) in links.into_iter().zip(ends.windows(2)) {
             self.budget()?;
-            self.d.edges.push(Edge { from: w[0], to: w[1], label: l.label, line: l.line, start: l.start, end: l.end, minlen: 1, style: EdgeStyle::default() });
+            self.d.edges.push(Edge { from: w[0], to: w[1], label: l.label, line: l.line, start: l.start, end: l.end, minlen: 1, style: EdgeStyle::default(), on_cluster: [None; 2] });
         }
         Some(())
     }

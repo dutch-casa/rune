@@ -45,6 +45,26 @@ pub(crate) fn measure_wrap(s: &str, font: TextStyle, max_w: f32) -> Measured {
     Measured { text: s.to_owned(), size: [w, h], wrap: true }
 }
 
+/// [`measure`], wrapped to the narrowest width that takes as few lines, so the lines come out
+/// even and none is a lone word.
+pub(crate) fn measure_balanced(s: &str, font: TextStyle) -> Measured {
+    let mut m = measure(s, font);
+    if !m.wrap {
+        return m;
+    }
+    let (mut lo, mut hi) = (0.0, m.size[0]);
+    while hi - lo > 1.0 {
+        let mid = (lo + hi) / 2.0;
+        let (w, h) = rune::text::measure(s, &[], font, Some(mid));
+        if h > m.size[1] + 0.5 {
+            lo = mid;
+        } else {
+            (hi, m.size[0]) = (mid, w);
+        }
+    }
+    m
+}
+
 /// Straight-alpha `top` composited over `bottom` in linear sRGB.
 pub(crate) fn over_color(top: Color, bottom: Color) -> Color {
     let a = top.a + bottom.a * (1.0 - top.a);

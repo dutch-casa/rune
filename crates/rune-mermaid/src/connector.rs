@@ -15,9 +15,9 @@ pub(crate) fn label_box(m: &Measured) -> [f32; 2] {
     [m.size[0] + 12.0, m.size[1] + 6.0]
 }
 
-/// Where a subgraph's title sits, with a little air, for a subgraph whose top left is `p0`.
-pub(crate) fn title_box(m: &Measured, p0: [f32; 2]) -> [f32; 4] {
-    [p0[0] + 6.0, p0[1] + 3.0, p0[0] + 14.0 + m.size[0], p0[1] + 11.0 + m.size[1]]
+/// A subgraph's title drawn from `at`, with a little air.
+pub(crate) fn title_box(m: &Measured, at: [f32; 2]) -> [f32; 4] {
+    [at[0] - 4.0, at[1] - 4.0, at[0] + m.size[0] + 4.0, at[1] + m.size[1] + 4.0]
 }
 
 /// How far a head of kind `h` takes its end of the line back.
@@ -46,9 +46,13 @@ fn pen(e: &Edge, paint: &DiagramStyle) -> (Color, f32) {
 
 /// Every edge routed through `ctx`, with its label in a gap in the line (on a pill of `backs[i]`
 /// where it would cover a subgraph's border); each edge's drawing and label are kept as a trace
-/// so hovering either node, the edge or its label lights them up.
+/// so hovering either node, the edge or its label lights them up. Text an edge still crosses,
+/// another edge's label or a subgraph's title (`titles`: its box and what's behind it), gets a
+/// knockout in its background colour.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<Measured>], backs: &[Color], flip: bool, font: TextStyle, paint: &DiagramStyle) {
+pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<Measured>], backs: &[Color], titles: &[([f32; 4], Color)], flip: bool, font: TextStyle, paint: &DiagramStyle) {
+    let mut curves: Vec<(usize, Vec<[f32; 2]>)> = Vec::new();
+    let mut texts: Vec<([f32; 4], Color, Option<usize>)> = titles.iter().map(|&(r, back)| (r, back, None)).collect();
     for (i, e) in edges.iter().enumerate() {
         let start = c.ops.len();
         let (color, _) = pen(e, paint);
@@ -70,7 +74,11 @@ pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<
             });
             let runs = gap.map_or_else(|| vec![r.curve.clone()], |g| outside(&r.curve, g));
             connector(c, &runs, [(r.tip_start, r.dir_start), (r.tip_end, r.dir_end)], e, paint);
+            if e.line != Line::Invisible {
+                curves.push((i, r.curve.clone()));
+            }
             if let (Some(m), Some(at), Some(g)) = (&labels[i], r.label, gap) {
+                texts.push((g, back, Some(i)));
                 // A label left on a subgraph's border hides it, as the line does around it.
                 if ctx.on_border(g) {
                     c.fill(rounded_rect(g[0], g[1], g[2], g[3], 4.0), back);
@@ -82,6 +90,11 @@ pub(crate) fn edges(c: &mut Canvas, ctx: &Ctx, edges: &[Edge], labels: &[Option<
         // A label with no text draws nothing, so nothing lights.
         let lit_label = lit_label.filter(|l| l.0 < c.labels.len());
         c.trace(e.from, e.to, start, color, lit_label);
+    }
+    for (r, back, own) in texts {
+        if curves.iter().any(|(j, curve)| Some(*j) != own && curve.windows(2).any(|w| inside_span(w[0], w[1], r).is_some())) {
+            c.fill(rounded_rect(r[0], r[1], r[2], r[3], 4.0), back);
+        }
     }
 }
 

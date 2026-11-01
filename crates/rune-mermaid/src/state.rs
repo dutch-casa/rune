@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use rune::Color;
 
-use super::canvas::{Measured, Scene, measure};
+use super::canvas::{Measured, Scene, measure_balanced};
 use super::layered::Spacing;
 use super::layered_draw::{ClusterSpec, Dir, DrawNode, Edge, Head, Line, NodeShape, draw_layered, node_size};
 use super::{
@@ -237,6 +237,7 @@ impl Parser {
             end: Head::Arrow,
             minlen: 1,
             style: EdgeStyle::default(),
+            on_cluster: [None; 2],
         });
         self.hold_regions(&from, &to);
         Some(())
@@ -264,6 +265,7 @@ impl Parser {
                 end: Head::None,
                 minlen: 1,
                 style: EdgeStyle::default(),
+                on_cluster: [None; 2],
             });
         }
     }
@@ -439,7 +441,7 @@ impl Parser {
         let note = self.d.states.len() - 1;
         let (from, to) = if side == Side::Left { (note, at) } else { (at, note) };
         self.budget()?;
-        self.d.edges.push(Edge { from, to, label: None, line: Line::Dotted, start: Head::None, end: Head::None, minlen: 1, style: EdgeStyle::default() });
+        self.d.edges.push(Edge { from, to, label: None, line: Line::Dotted, start: Head::None, end: Head::None, minlen: 1, style: EdgeStyle::default(), on_cluster: [None; 2] });
         Some(())
     }
 
@@ -508,12 +510,12 @@ pub(crate) fn draw(d: &StateDiagram, paint: &DiagramStyle, hover: Option<(Hover,
                 style: s.style,
             },
             StateKind::Note => {
-                let label = measure(&s.label, paint.font);
+                let label = measure_balanced(&s.label, paint.font);
                 DrawNode::Shape { shape: NodeShape::Note, size: node_size(NodeShape::Note, label.size), label, cluster: s.cluster, style: s.style }
             }
             StateKind::Normal => {
                 let full = if s.desc.is_empty() { s.label.clone() } else { format!("{}\n{}", s.label, s.desc.join("\n")) };
-                let label = measure(&full, paint.font);
+                let label = measure_balanced(&full, paint.font);
                 DrawNode::Shape { shape: NodeShape::Round, size: node_size(NodeShape::Round, label.size), label, cluster: s.cluster, style: s.style }
             }
         })
