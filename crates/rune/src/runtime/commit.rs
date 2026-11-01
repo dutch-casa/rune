@@ -77,6 +77,7 @@ impl<S: 'static> Runtime<S> {
                 scroll.pinned = true;
             }
         }
+        self.note_drawn_rows();
         let mut measured = self.measure_commit(tx);
         self.focus_before_commit = self.focused.clone();
         // Settle layout reads first so a field that mounts once a rect is known is in `nodes`.

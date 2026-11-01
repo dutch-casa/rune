@@ -46,6 +46,8 @@ pub(crate) struct VirtualList {
     /// The rows the last applied commit mounted. Every measurement of a commit compares with
     /// these, not with the pass before it.
     pub shown: HashSet<String>,
+    /// The rows drawn inside the viewport on the last frame (`Runtime::note_drawn_rows`).
+    pub drawn: Vec<String>,
     /// The row holding the focused element, kept while that row is scrolled out.
     pub focused_row: Option<String>,
     /// The rows holding the text selection's anchor and focus, kept built while scrolled out.
@@ -348,6 +350,14 @@ impl VirtualList {
                 (start, end)
             }
         };
+        // Rows drawn in the viewport stay while motion still shows them where layout has moved
+        // them out (rows below a fold gliding open), within an overscan of the window.
+        let (mut lo, mut hi) = (start, end);
+        for i in self.drawn.iter().filter_map(|k| self.index_of(k)) {
+            if i < start && self.prefix(start) - self.prefix(i) <= self.viewport * OVERSCAN { lo = lo.min(i); }
+            if i >= end && self.row_end(i + 1) - self.row_end(end) <= self.viewport * OVERSCAN { hi = hi.max(i + 1); }
+        }
+        (start, end) = (lo, hi);
         // A row still at its estimate grows or shrinks once measured; anchoring to it would move
         // the measured rows below, such as the reader's row under a page that just landed.
         self.anchor = if pinned { None } else {

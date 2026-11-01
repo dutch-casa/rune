@@ -114,3 +114,5 @@ impl<S: 'static> Run<S> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod loop_tests;
