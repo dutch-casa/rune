@@ -367,8 +367,9 @@ impl MarkdownStyle {
         self.diagram.font = f;
         self
     }
-    /// The widest a diagram draws, in points (680 by default). A wider left-to-right flowchart
-    /// is laid out top-down instead; anything still wider is drawn smaller, down to 60%.
+    /// The widest a diagram draws, in points (680 by default). A left-to-right flowchart that
+    /// would have to shrink below 78% to fit is laid out top-down instead, when that comes out
+    /// narrower; anything still wider is drawn smaller, down to 60%.
     pub fn diagram_max_width(mut self, points: f32) -> Self {
         self.diagram.max_width = points.max(120.0);
         self
