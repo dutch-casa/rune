@@ -511,3 +511,52 @@ shape but not each pipeline's exact strides.
 - A direct write can race a frame still on the GPU that reads the same buffer. Phase 1's ring
   is needed for correctness, and will add a little to `WRITES=1`.
 - The layer's scale is set once at creation and doesn't follow a display change.
+
+## Memory: Metal vs wgpu
+
+One app reported, from single unpaired runs, a headless footprint of about 330 MB on the Metal
+backend against 1.5 to 1.6 GB on wgpu. Paired and alternating runs of one `--profile perf` binary
+(`--features rune/metal-backend`, `RUNE_GPU_BACKEND=metal` or `wgpu`), five pairs each, medians.
+Footprint is `phys_footprint` (`footprint`, `time -l` for the peak); RSS from `ps` or `time -l`.
+Headless is `long_note --gpu --only scroll --sizes 200 --samples 300` (a 200 KB note scrolled
+top to bottom, 785 frames, drawn on a headless GPU). Windows are real, on an M2 Max MacBook Pro
+(macOS 27.0.1, unlocked, awake): `hello` idle after 5 s, and `window_scroll_cost` (60 sections of
+text rows, scrolling at 600 pt/s) sampled at 7 s, about 400 frames in.
+
+| Case | Backend | Footprint | RSS | Peak footprint |
+| --- | --- | ---: | ---: | ---: |
+| Headless, Mac mini (M4 Pro) | wgpu | – | 49.1 MB | 278.1 MB |
+| | Metal | – | 46.3 MB | 276.7 MB |
+| Headless, MacBook Pro (M2 Max) | wgpu | – | 47.6 MB | 58.0 MB |
+| | Metal | – | 44.7 MB | 57.8 MB |
+| Window idle, 5 s | wgpu | 34 MB | 95.1 MB | 41.5 MB |
+| | Metal | 33 MB | 92.5 MB | 39.7 MB |
+| Window scrolling, 7 s | wgpu | 68 MB | 104.1 MB | 67.5 MB |
+| | Metal | 74 MB | 101.1 MB | 74.2 MB |
+
+**The claim does not hold in these workloads.** The two backends are within a few MB of each
+other everywhere, and neither gets near 330 MB, let alone 1.5 GB. Metal has about 3 MB less RSS;
+in the scrolling window it has about 6 MB more footprint,. I sampled only at 7 s, so growth over a longer run is
+not ruled out.
+
+Where the footprint goes (`footprint` by category, one run each):
+
+| Category | wgpu idle | Metal idle | wgpu scrolling | Metal scrolling |
+| --- | ---: | ---: | ---: | ---: |
+| IOSurface (the layer's drawables) | 5.6 MB | 5.6 MB | 22 MB | 22 MB |
+| IOAccelerator (graphics), dirty | 1.1 MB | 1.2 MB | 4.4 MB | 6.6 MB |
+| Owned physical footprint (graphics) | 6.2 MB | 5.6 MB | 7.6 MB | 9.6 MB |
+| Malloc small | 12 MB | 11 MB | 20 MB | 19 MB |
+
+The wgpu#10494 growth (about 2.3 MiB of IOAccelerator memory per command buffer, held until the
+buffers are collected) does not show: wgpu's IOAccelerator is no larger than Metal's after
+hundreds of frames. The 6 MB scrolling difference is IOAccelerator and graphics-owned memory,
+likely the Metal backend's own pooled buffers and the drawable it keeps in flight, and I did not
+chase it further.
+
+So a gap of 1 GB or more is not something the backend alone produces. It must come from what that
+app draws or keeps: large images or atlases, offscreen targets, or buffers that wgpu keeps alive
+and the Metal backend frees or never makes. To attribute it, run that app's own headless frames
+under both backends with `footprint --by-category` and `vmmap --summary`, and compare
+IOAccelerator, IOSurface and Malloc. Not measured here: an app with image-heavy views, effects
+or many windows, and a long idle run.
