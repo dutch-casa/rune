@@ -49,6 +49,15 @@ impl<S: 'static> Runtime<S> {
         false
     }
 
+    /// Whether the commit about to run is a live-only check's, which builds what skipping it
+    /// would have left on screen, so virtual lists keep their mounted rows.
+    pub(super) fn checking_live_only(&self) -> bool {
+        #[cfg(debug_assertions)]
+        { self.live_check.is_some() }
+        #[cfg(not(debug_assertions))]
+        { false }
+    }
+
     /// What the last commit built: each element's path, layout, colours and text. Live values
     /// are left out, since a commit rebuilds them from the view and the next latch sets them.
     #[cfg(debug_assertions)]

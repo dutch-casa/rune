@@ -465,11 +465,11 @@ impl<S: 'static> Runtime<S> {
                     if self.settle { tx.settle(); }
                     self.settled |= tx.settle;
                     #[cfg(debug_assertions)]
-                    let check = self.live_check.take().filter(|_| !ran_other && !self.dirty && !ran_layout);
+                    if ran_other || self.dirty || ran_layout { self.live_check = None; }
                     self.capture_keeps(&mut tx);
                     self.commit_for(&tx, std::mem::take(&mut why) | CommitWhy::ROUTE | if self.dirty { CommitWhy::DIRTY } else { 0 });
                     #[cfg(debug_assertions)]
-                    { self.compare_live_check(check); ran_other = false; }
+                    { let check = self.live_check.take(); self.compare_live_check(check); ran_other = false; }
                     self.apply_keeps();
                     ran = false;
                 }
@@ -545,13 +545,13 @@ impl<S: 'static> Runtime<S> {
             self.settled = tx.settle;
             self.state_unchanged = !ran && !self.dirty && !ran_layout && !self.settle && self.commits > 0;
             #[cfg(debug_assertions)]
-            let check = self.live_check.take().filter(|_| !ran_other && !besides && !ran_layout && !read_moved);
+            if ran_other || besides || ran_layout || read_moved { self.live_check = None; }
             self.capture_keeps(&mut tx);
             let flag = |on: bool, bit: u16| if on { bit } else { 0 };
             self.commit_for(&tx, why | flag(self.dirty, CommitWhy::DIRTY) | flag(self.relayout, CommitWhy::RELAYOUT) | flag(self.settle, CommitWhy::SETTLE)
                 | flag(shifted, CommitWhy::VIRTUAL) | flag(ran_layout, CommitWhy::LAYOUT) | flag(read_moved, CommitWhy::READ));
             #[cfg(debug_assertions)]
-            self.compare_live_check(check);
+            { let check = self.live_check.take(); self.compare_live_check(check); }
             self.apply_keeps();
         }
         #[cfg(debug_assertions)]

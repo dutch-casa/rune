@@ -213,3 +213,58 @@ fn a_selection_handler_after_a_checked_event_is_not_blamed_on_it() {
     assert!(rt.state.heard > heard, "the selection handler ran");
     assert!(rt.live_only_warnings.is_empty(), "{:#?}", rt.live_only_warnings);
 }
+
+/// 2,000 index-built rows whose cells call `Tx::live_only` on hover. Rows from `stale_from` on
+/// show `s.hovers`, which the handler counts: state a live-only handler mustn't change.
+struct Long { hovers: u32, stale_from: usize }
+
+fn long_app(stale_from: usize) -> Runtime<Long> {
+    fn view(_: &Long, _: &mut Cx<Long>) -> El {
+        let list = col().key("rows").w_full().growth(crate::GrowthSpec::default())
+            .virtual_rows(2000, ROW_H, |_: &Long, i| format!("r{i}").into(), |s: &Long, i| {
+                let label = if i >= s.stale_from { format!("{i}: {}", s.hovers) } else { i.to_string() };
+                col().w_full().h(ROW_H).child(text(label).key("cell").w_full().h(ROW_H)
+                    .on_hover_change(|s: &mut Long, _, tx| { if s.stale_from < 2000 { s.hovers += 1; } tx.live_only(); }))
+            });
+        col().w_full().h_full()
+            .child(col().key("scroll").w_full().grow(1.0).min_h(0.0).scroll(ScrollSpec { stick_bottom: false }).child(list))
+    }
+    let mut rt = Runtime::new(Long { hovers: 0, stale_from }, view, (400.0, 300.0), Env::new(true, 2.0));
+    rt.frame(0.0);
+    for _ in 0..60 { rt.frame(1.0 / 60.0); }
+    rt
+}
+
+/// The viewport grows without the virtual window moving (its rows still cover it), then a
+/// checked live-only hover: the check's commit must not re-pick the overscan and report the
+/// rows it would add below the viewport.
+#[test]
+fn a_grown_viewport_does_not_make_the_overscan_a_view_change() {
+    let mut rt = long_app(usize::MAX);
+    // Each hover lands on another row.
+    for (row, h) in [310.0, 330.0, 360.0, 400.0].into_iter().enumerate() {
+        let checks = rt.live_checks;
+        rt.set_viewport((400.0, h), 2.0);
+        for _ in 0..10 { rt.frame(1.0 / 60.0); }
+        rt.frame(0.3);
+        rt.pointer_move(200.0, (row as f32 + 0.5) * ROW_H);
+        for _ in 0..3 { rt.frame(1.0 / 60.0); }
+        assert!(rt.live_checks > checks, "viewport {h}: the hover was checked");
+    }
+    assert!(rt.live_only_warnings.is_empty(), "{:#?}", rt.live_only_warnings);
+}
+
+/// A row mounted below the viewport shows on screen when scrolled to without a commit, so a
+/// live-only handler that changes it is still named after the viewport grows.
+#[test]
+fn a_stale_row_mounted_below_the_viewport_still_warns_after_the_viewport_grows() {
+    let mut rt = long_app(30);
+    rt.set_viewport((400.0, 360.0), 2.0);
+    for _ in 0..10 { rt.frame(1.0 / 60.0); }
+    rt.frame(0.3);
+    rt.pointer_move(200.0, 45.0);
+    for _ in 0..3 { rt.frame(1.0 / 60.0); }
+    assert_eq!(rt.live_only_warnings.len(), 1, "{:#?}", rt.live_only_warnings);
+    let w = &rt.live_only_warnings[0];
+    assert!(w.contains("text of") && w.contains("/rows/r30/cell"), "{w}");
+}
