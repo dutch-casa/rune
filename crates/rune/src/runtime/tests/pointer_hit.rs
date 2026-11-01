@@ -362,7 +362,7 @@ fn a_double_press_on_nothing_in_the_native_titlebar_band_takes_the_titlebar_acti
     }
     let mut rt = Runtime::new((), view, (200.0, 200.0), Env::new(true, 1.0));
     rt.frame(0.0);
-    let mut double = |rt: &mut Runtime<()>, x: f32, y: f32| {
+    let double = |rt: &mut Runtime<()>, x: f32, y: f32| {
         let mut actions = Vec::new();
         for _ in 0..2 {
             rt.pointer_move(x, y);

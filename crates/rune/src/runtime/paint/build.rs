@@ -273,8 +273,7 @@ impl<S: 'static> Runtime<S> {
             // counts as moving until it holds still, then rasterizes crisp at its resting scale.
             let has_live_scale = n.live.iter().any(|b| b.property == crate::live::Property::Scale);
             let tracked_scale = if has_live_scale { static_k * p.transform.scale.x } else { static_k };
-            let untracked_scale = !n.scale_track || has_live_scale;
-            let scale_settling = if untracked_scale && (tracked_scale != 1.0 || has_live_scale || self.static_scales.contains_key(&n.id)) {
+            let scale_settling = if tracked_scale != 1.0 || has_live_scale || self.static_scales.contains_key(&n.id) {
                 let t = self.t;
                 let seen = self.static_scales.entry(n.id).or_insert((tracked_scale, f64::NEG_INFINITY, false));
                 if self.settled {
