@@ -89,7 +89,7 @@ pub struct OverlaySpec<T: 'static> {
 pub enum Availability {
     Unknown,
     Available,
-    /// Wayland without layer-shell, or the surface couldn't be created.
+    /// Wayland without layer-shell, or its window, surface or show failed (`OverlayHandle::failure`).
     Unavailable,
 }
 
@@ -107,6 +107,10 @@ struct Shared<T> {
     native: Mutex<(Option<u32>, crate::OverlayCapabilities)>,
     requests: Mutex<Requests<T>>,
     availability: AtomicU8,
+    /// Why the platform could not create or show the overlay, while it can't.
+    failure: Mutex<Option<String>>,
+    /// What draws the overlay: backend, adapter and alpha mode, once its surface exists.
+    surface: Mutex<Option<String>>,
     /// The event loop's wake-up for this overlay; empty until the loop runs.
     wake: Mutex<Option<Waker>>,
     /// What the overlay's meter last published.
@@ -242,6 +246,17 @@ impl<T: 'static> OverlayHandle<T> {
         }
     }
 
+    /// Why the overlay is `Unavailable`: the window, its GPU surface, or showing it failed.
+    pub fn failure(&self) -> Option<String> {
+        self.shared.failure.lock().unwrap().clone()
+    }
+
+    /// What draws the overlay, such as `Dx12 on Intel(R) UHD Graphics (IntegratedGpu),
+    /// PreMultiplied`, once its surface exists; for logs.
+    pub fn surface_description(&self) -> Option<String> {
+        self.shared.surface.lock().unwrap().clone()
+    }
+
     fn request(&self, f: impl FnOnce(&mut Requests<T>)) {
         f(&mut self.shared.requests.lock().unwrap());
         self.shared.wake();
@@ -325,6 +340,7 @@ pub(crate) struct Overlay<T: 'static> {
     idle: bool,
     /// After the last frame the runtime asked for no other; only the compositor animates.
     runtime_idle: bool,
+    quiet: frame::Quiet,
     clock: FrameClock,
     /// The panel is shown but none of it is on screen (covered, or the displays asleep).
     #[cfg(target_os = "macos")]
@@ -347,7 +363,7 @@ pub(crate) struct Overlay<T: 'static> {
 impl<T: 'static> Overlay<T> {
     pub(crate) fn new<S>(configured: impl Into<ConfiguredOverlay<T>>, state: T, app: &AppSpec<S>) -> (Self, OverlayHandle<T>) {
         let ConfiguredOverlay { spec, options, on_key, on_created, poll, on_focus, compositor, setup, srgb_blend, macos_level, modifier_keys, animate_reveal } = configured.into();
-        let shared = Arc::new(Shared { native: Mutex::default(), requests: Mutex::default(), availability: AtomicU8::new(0), wake: Mutex::new(None), stats: Arc::default() });
+        let shared = Arc::new(Shared { native: Mutex::default(), requests: Mutex::default(), availability: AtomicU8::new(0), failure: Mutex::default(), surface: Mutex::default(), wake: Mutex::new(None), stats: Arc::default() });
         let meter = crate::frame::surface_stats::SurfaceMeter::new(spec.name, shared.stats.clone());
         let text = TextSystem::for_window(app.fonts, app.families);
         let mut rt = Runtime::with_text(state, spec.view, spec.size, Env::default(), text);
@@ -403,6 +419,7 @@ impl<T: 'static> Overlay<T> {
             dirty: true,
             idle: true,
             runtime_idle: false,
+            quiet: Default::default(),
             clock: FrameClock::new(Instant::now()),
             #[cfg(target_os = "macos")]
             occluded: false,
@@ -425,6 +442,13 @@ impl<T: 'static> Overlay<T> {
             Availability::Unavailable => 2,
         };
         self.shared.availability.store(v, Ordering::Release);
+    }
+
+    /// Marks the overlay `Unavailable` and keeps why, for `OverlayHandle::failure`.
+    fn fail(&self, reason: String) {
+        eprintln!("rune: overlay {} can't show: {reason}", self.name);
+        *self.shared.failure.lock().unwrap() = Some(reason);
+        self.set_availability(Availability::Unavailable);
     }
 
     fn show_fading(&mut self, event_loop: &ActiveEventLoop, fade: Duration) {
@@ -501,7 +525,11 @@ impl<T: 'static> Overlay<T> {
                     created(crate::OverlayCreated { window_number, capabilities });
                 }
             }
-            None => self.set_availability(Availability::Unavailable),
+            None => if self.shared.failure.lock().unwrap().is_none() {
+                self.fail("the platform could not create its window or surface".into());
+            } else {
+                self.set_availability(Availability::Unavailable);
+            },
         }
     }
 
@@ -540,6 +568,7 @@ impl<T: 'static> Overlay<T> {
         if let Some(live) = &mut self.live && let Some(pacing) = &mut live.pacing { pacing.stop(); }
         self.rt.set_live_visible(false);
         self.retry = None;
+        self.quiet = Default::default();
     }
 
     /// Ends a fade-out that has run its course.
@@ -652,7 +681,13 @@ impl<T: 'static> Overlay<T> {
             use winit::platform::macos::WindowAttributesExtMacOS;
             attrs = attrs.with_has_shadow(false);
         }
-        let window = Arc::new(event_loop.create_window(attrs).ok()?);
+        let window = match event_loop.create_window(attrs) {
+            Ok(window) => Arc::new(window),
+            Err(error) => {
+                self.fail(format!("could not create its window: {error}"));
+                return None;
+            }
+        };
         #[cfg(target_os = "macos")]
         crate::native_menu::adopt_standard_view();
         self.dark = window.theme().map_or_else(|| crate::platform::preferences::desktop_dark(&window).unwrap_or(true), |t| t == winit::window::Theme::Dark);
@@ -687,7 +722,13 @@ impl<T: 'static> Overlay<T> {
             #[cfg(target_os = "windows")]
             {
                 let wake = self.shared.wake.lock().unwrap().clone();
-                self.native = Some(crate::platform::win32::OverlayWindow::new(&window, self.interactive, &self.options, wake)?);
+                match crate::platform::win32::OverlayWindow::new(&window, self.interactive, &self.options, wake) {
+                    Ok(native) => self.native = Some(native),
+                    Err(error) => {
+                        self.fail(error);
+                        return None;
+                    }
+                }
                 self.shared.native.lock().unwrap().1 = crate::OverlayCapabilities {
                     capture_exclusion: self.native.as_ref().unwrap().capture_exclusion(), nonactivating_keys: OverlaySupport::Unsupported, global_pointer: OverlaySupport::Supported,
                 };
@@ -757,7 +798,12 @@ impl<T: 'static> Overlay<T> {
         #[cfg(target_os = "windows")]
         {
             let _ = window;
-            if let Some(native) = &mut self.native { native.show(); }
+            if let Some(native) = &mut self.native {
+                match native.show() {
+                    Ok(()) => if self.shared.failure.lock().unwrap().take().is_some() { self.set_availability(Availability::Available) },
+                    Err(error) => self.fail(error),
+                }
+            }
         }
         #[cfg(not(target_os = "windows"))]
         window.set_visible(true);
@@ -882,7 +928,14 @@ impl<T: 'static> Overlay<T> {
         let surface = match reused {
             Some((gpu, surface)) => { self.gpu = Some(gpu); surface }
             None => {
-                let (gpu, surface, renderer) = Gpu::for_surface(features, true, |instance| make(instance).ok_or_else(String::new)).ok()?;
+                let made = Gpu::for_surface(features, true, |instance| make(instance).ok_or_else(|| "could not create its GPU surface".to_owned()));
+                let (gpu, surface, renderer) = match made {
+                    Ok(made) => made,
+                    Err(error) => {
+                        self.fail(error);
+                        return None;
+                    }
+                };
                 prewarmed = renderer;
                 let gpu = Arc::new(gpu);
                 *self.gpu_pool.borrow_mut() = Arc::downgrade(&gpu);
@@ -893,7 +946,19 @@ impl<T: 'static> Overlay<T> {
         let gpu = self.gpu.clone()?;
         let (w, h) = ((self.at.size.0 * scale).round() as u32, (self.at.size.1 * scale).round() as u32);
         let (mut config, translucent) = crate::window::surface_config(&surface, &gpu.adapter, (w, h), self.rt.srgb_blend())?;
-        if let Some(mode) = translucent { config.alpha_mode = mode } else { eprintln!("transparency unavailable for overlay {}; drawing it opaque", self.name) }
+        match translucent {
+            Some(mode) => config.alpha_mode = mode,
+            // Windows composites an overlay's pixels only through DirectComposition; drawn
+            // opaque on its window they never show.
+            None if cfg!(target_os = "windows") => {
+                let info = gpu.adapter.get_info();
+                self.fail(format!("{:?} on {} can't composite transparent pixels; Windows overlays need DX12 with DirectComposition", info.backend, info.name));
+                return None;
+            }
+            None => eprintln!("transparency unavailable for overlay {}; drawing it opaque", self.name),
+        }
+        let info = gpu.adapter.get_info();
+        *self.shared.surface.lock().unwrap() = Some(format!("{:?} on {} ({:?}), {:?}, {:?}", info.backend, info.name, info.device_type, config.alpha_mode, config.format));
         surface.configure(&gpu.device, &config);
         #[cfg(target_os = "macos")]
         crate::platform::macos::pin_contents_top_left(&surface);

@@ -65,6 +65,14 @@ pub(super) fn motion(p: &Presented, rest: Option<Rect>, s: f32, anchored: bool, 
     Some(Motion { by, rest: b, k: 1.0 })
 }
 
+/// How far a gliding box's top (device px) sits below its nearest whole pixel: its glyphs lay
+/// out from that pixel, as at rest, and move down by this ([`crate::text::TextSystem::set_glide`]),
+/// so they keep their place against the box instead of stepping a pixel at a time.
+pub(super) fn text_glide(top: f32) -> f32 {
+    let g = top - top.round();
+    if g.abs() < 1.0 / 64.0 { 0.0 } else { g }
+}
+
 /// One moving node's glide: its edges' corrections go from `from` to `to` (the resting rect's
 /// rounding) as their motion goes from `span` to 0.
 #[derive(Clone, Copy)]

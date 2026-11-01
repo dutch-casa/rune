@@ -108,6 +108,8 @@ pub(crate) struct Job<'a> {
     pub glyph: u16,
     pub ppem: f32,
     pub phase_x: f32,
+    /// Device px the mask is moved down after hinting, so a gliding glyph keeps its shape.
+    pub shift_y: f32,
     pub radius: f64,
     pub skew: u8,
 }
@@ -174,7 +176,11 @@ impl Smoothing {
         } else {
             None
         };
-        let path = prepare_outline(&path, pipeline, job.ppem as f64, job.radius, [job.phase_x as f64, 0.0], metrics);
+        let mut path = prepare_outline(&path, pipeline, job.ppem as f64, job.radius, [job.phase_x as f64, 0.0], metrics);
+        if job.shift_y != 0.0 {
+            let dy = -job.shift_y as f64;
+            path = path.into_iter().map(|c| c.map(|v| [v[0], v[1] + dy])).collect();
+        }
         (!path.is_empty()).then(|| mask(&path))
     }
 }

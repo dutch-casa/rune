@@ -4,13 +4,13 @@
 //!
 //! An entry belongs to one `Rc<Layout>` (held weakly, so its address can't be reused while the
 //! entry lives), one raster factor, the ink buckets that choose dilation and the pipeline. It
-//! keeps per line each glyph's pen inputs and the atlas mask it last drew at its x phase. A
+//! keeps per line each glyph's pen inputs and the atlas mask it last drew at its phases. A
 //! frame recomputes every position from the origin with the same arithmetic as
 //! [`TextSystem::glyphs_in_band`], so quads come out bit for bit the same; a glyph whose phase
 //! moved, or any glyph after the atlas evicts a page, asks the atlas again.
 use std::rc::Weak;
 
-use super::glyph_emit::{Placed, atlas_quad};
+use super::glyph_emit::{Placed, atlas_quad, place};
 use super::*;
 
 /// Bytes all entries may hold before the least recently painted go.
@@ -73,7 +73,8 @@ struct Glyph {
     y: f32,
     byte: u32,
     face: u16,
-    subpx: u8,
+    /// The x and y phases its mask was looked up at.
+    sub: [u8; 2],
     state: u8,
     mask: AtlasGlyph,
 }
@@ -124,7 +125,7 @@ impl Entry {
                 } else {
                     0
                 };
-                self.glyphs.push(Glyph { id: g.id, rel, x: g.x, y: g.y, byte, face, subpx: 0, state: UNKNOWN, mask: NO_MASK });
+                self.glyphs.push(Glyph { id: g.id, rel, x: g.x, y: g.y, byte, face, sub: [0; 2], state: UNKNOWN, mask: NO_MASK });
                 rel += g.advance;
             }
         }
@@ -285,21 +286,21 @@ impl TextSystem {
             }
             let at = if k == 1.0 { [origin[0] + g.rel + g.x, baseline + g.y] }
                 else { [origin[0] + (g.rel + g.x) * k, baseline + g.y * k] };
-            let (fx, subpx) = coretext_match::glyph_x(at[0], size);
-            if g.subpx == subpx && g.state == PLACED {
+            let ([fx, fy], sub) = place(at, size, self.glide);
+            if g.sub == sub && g.state == PLACED {
                 self.atlas.touch(g.mask.page, g.mask.w * g.mask.h);
-                out.push(atlas_quad(g.mask, fx, at[1], f.0.ink, g.byte));
+                out.push(atlas_quad(g.mask, fx, fy, f.0.ink, g.byte));
                 continue;
             }
-            if g.subpx == subpx && g.state == EMPTY {
+            if g.sub == sub && g.state == EMPTY {
                 continue;
             }
             let placed = self.push_glyph(&f.0, &entry.coords[f.1 as usize..f.2 as usize], g.id, at, k, g.byte, out);
             let g = &mut entry.glyphs[gi];
-            (g.state, g.subpx, g.mask) = match placed {
-                Placed::Atlas(mask, subpx) => (PLACED, subpx, mask),
-                Placed::Empty(subpx) => (EMPTY, subpx, NO_MASK),
-                Placed::Other => (UNKNOWN, 0, NO_MASK),
+            (g.state, g.sub, g.mask) = match placed {
+                Placed::Atlas(mask, sub) => (PLACED, sub, mask),
+                Placed::Empty(sub) => (EMPTY, sub, NO_MASK),
+                Placed::Other => (UNKNOWN, [0; 2], NO_MASK),
             };
         }
     }

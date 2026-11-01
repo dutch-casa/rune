@@ -35,7 +35,8 @@ mod win;
 use win::{FirstFrame, Win};
 mod draw;
 mod presented;
-use presented::{Presented, composing};
+pub(crate) use presented::Presented;
+use presented::composing;
 mod platform_sync;
 use platform_sync::sync_platform;
 mod shell_requests;
@@ -865,6 +866,10 @@ impl<S: 'static> Host<S> {
             alpha,
             quiet: false,
             presented: None,
+            #[cfg(target_os = "windows")]
+            steady_until: None,
+            #[cfg(target_os = "windows")]
+            steady_frame: false,
         });
         if launcher { self.win.as_mut().unwrap().first_frame.prepare(); }
         self.apply_placement(event_loop);

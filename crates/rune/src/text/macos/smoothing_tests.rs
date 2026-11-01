@@ -516,7 +516,7 @@ fn rasterize_cost() {
             for &g in &glyphs {
                 for subpx in 0..4 {
                     let radius = radius_for_bucket(ppem as f64, 0);
-                    let job = Job { font, key: (0, 0, 0), coords: &[], glyph: g, ppem, phase_x: subpx as f32 / 4.0, radius, skew: 0 };
+                    let job = Job { font, key: (0, 0, 0), coords: &[], glyph: g, ppem, phase_x: subpx as f32 / 4.0, shift_y: 0.0, radius, skew: 0 };
                     per_bucket[0] += smoothing.mask(&mut cx, &job).map_or(0, |m| m.0.len());
                 }
             }
@@ -527,7 +527,7 @@ fn rasterize_cost() {
         for _ in 0..rounds {
             for &g in &glyphs {
                 for subpx in 0..4 {
-                    let job = Job { font, key: (0, 0, 0), coords: &[], glyph: g, ppem, phase_x: subpx as f32 / 4.0, radius: 0.0, skew: 0 };
+                    let job = Job { font, key: (0, 0, 0), coords: &[], glyph: g, ppem, phase_x: subpx as f32 / 4.0, shift_y: 0.0, radius: 0.0, skew: 0 };
                     std::hint::black_box(smoothing.mask(&mut cx, &job));
                 }
             }
@@ -543,7 +543,7 @@ fn rasterize_cost() {
             radii.push(radius);
             for &g in &glyphs {
                 for subpx in 0..4 {
-                    let job = Job { font, key: (0, 0, 0), coords: &[], glyph: g, ppem, phase_x: subpx as f32 / 4.0, radius, skew: 0 };
+                    let job = Job { font, key: (0, 0, 0), coords: &[], glyph: g, ppem, phase_x: subpx as f32 / 4.0, shift_y: 0.0, radius, skew: 0 };
                     *slot += smoothing.mask(&mut cx, &job).map_or(0, |m| m.0.len()) * rounds;
                 }
             }

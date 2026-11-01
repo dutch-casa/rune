@@ -143,7 +143,7 @@ pub use frame::surface_stats::Pacing;
 pub use frame::surface_stats::SurfaceCounts;
 pub use frame::surface_stats::SurfaceStats;
 pub use gpu::backend::GpuBackend;
-#[cfg(all(target_os = "macos", feature = "metal-backend"))]
+#[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
 #[doc(hidden)]
 pub use gpu::metal::bench::dispatch_overhead as __metal_dispatch_overhead;
 pub use gpu::springs as gpu_springs;
@@ -220,6 +220,7 @@ pub use recorder::RecorderState;
 pub use recorder::Recording;
 pub use render::MAX_BACKDROP_BLURS;
 pub use render::prewarm_gpu;
+pub use render::prewarm_gpu_on;
 pub use rune_motion::Anim;
 pub use rune_motion::AnimExt;
 pub use rune_motion::Beat;

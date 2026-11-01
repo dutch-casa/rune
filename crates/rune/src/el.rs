@@ -941,6 +941,41 @@ impl El {
         self.vis.cold_mut().surface = Some((surface.clone(), fit));
         self
     }
+    /// Which edges a surface or [`pixels_fit`](Self::pixels_fit) image sticks to inside this
+    /// node, as (horizontal, vertical): `Start` is left and top, `End` is right and bottom. It
+    /// positions the spare space `Fit` leaves and the overflow `Fill` crops; the default is
+    /// `Center` on both axes. Applies to [`native_surface`](Self::native_surface),
+    /// [`video`](Self::video) and `pixels_fit`.
+    ///
+    /// ```
+    /// # use rune::{Align, SurfaceFit, el};
+    /// # let stream = rune::NativeSurface::new();
+    /// // A streamed page that keeps its top-left corner while the panel is resized.
+    /// let view = el().native_surface(&stream, SurfaceFit::Fill).surface_anchor(Align::Start, Align::Start);
+    /// ```
+    pub fn surface_anchor(mut self, horizontal: Align, vertical: Align) -> Self {
+        self.vis.cold_mut().surface_place.anchor = [horizontal, vertical];
+        self
+    }
+    /// Draw a surface or `pixels_fit` image at one texel per device pixel instead of scaling it
+    /// to the node, so `SurfaceFit` no longer applies. A node bigger than the image leaves the
+    /// rest empty; a smaller one crops it. Combine with
+    /// [`surface_anchor`](Self::surface_anchor) to choose which edges stay put. It suits a
+    /// stream rendered at the window's scale, whose last frame should hold still, not stretch,
+    /// until the next one arrives at the node's new size.
+    ///
+    /// ```
+    /// # use rune::{Align, SurfaceFit, el};
+    /// # let stream = rune::NativeSurface::new();
+    /// let view = el()
+    ///     .native_surface(&stream, SurfaceFit::Fill)
+    ///     .surface_anchor(Align::Start, Align::Start)
+    ///     .surface_unscaled(true);
+    /// ```
+    pub fn surface_unscaled(mut self, unscaled: bool) -> Self {
+        self.vis.cold_mut().surface_place.unscaled = unscaled;
+        self
+    }
     /// Play `video` inside this node: `Fit` letterboxes, `Fill` crops. Frames come from the
     /// display link while it plays; a paused video draws no frames of its own. Audio players
     /// need no element.

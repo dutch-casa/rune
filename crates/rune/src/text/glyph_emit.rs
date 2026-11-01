@@ -1,6 +1,10 @@
 //! Glyph emission: walking a laid-out paragraph's glyphs into atlas quads.
 use super::*;
 
+/// Positions a device pixel that the glyphs of a gliding box draw at down the screen
+/// ([`TextSystem::set_glide`]): a glyph has at most this many masks for each x phase.
+pub(crate) const GLIDE_PHASES: u8 = 4;
+
 impl TextSystem {
     /// Glyph quads for single-line `text` with its layout box's top-left at `origin` (device px).
     pub fn glyphs(&mut self, text: &str, style: TextStyle, scale: f32, origin: [f32; 2], out: &mut Vec<GlyphQuad>) {
@@ -110,9 +114,10 @@ impl TextSystem {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn push_glyph(&mut self, face: &Face, coords: &[i16], glyph: u32, at: [f32; 2], k: f32, byte: u32, out: &mut Vec<GlyphQuad>) -> Placed {
         let [gx, gy] = at;
+        let glide = self.glide;
         let (font, font_size, ink, skew) = (&face.font, face.size * k, face.ink, face.skew);
         let radius = self.apple.radius(ink, font_size);
-        let (fx, subpx) = coretext_match::glyph_x(gx, font_size);
+        let ([fx, fy], [subpx, subpy]) = place(at, font_size, self.glide);
         let key = GlyphKey {
             font: font.data.id(),
             index: font.index,
@@ -120,6 +125,7 @@ impl TextSystem {
             size: font_size.to_bits(),
             coords: face.coords_key,
             subpx,
+            subpy,
             dilation: (radius as f32).to_bits(),
             apple: self.apple.key(),
             skew,
@@ -133,10 +139,10 @@ impl TextSystem {
             }
             None => {
                 // Colour glyphs sit on whole pixels and ignore emboldening and obliques.
-                let color_key = GlyphKey { subpx: 0, dilation: 0, apple: 0, skew: 0, ..key };
+                let color_key = GlyphKey { subpx: 0, subpy: 0, dilation: 0, apple: 0, skew: 0, ..key };
                 if let Some(c) = self.color_glyphs.get_mut(&color_key) {
                     c.used = true;
-                    out.push(c.quad(gx, gy, ink, byte));
+                    out.push(c.quad(gx, gy, glide, ink, byte));
                     return Placed::Other;
                 }
                 let Some(font_ref) = FontRef::from_index(font.data.as_ref(), font.index as usize) else {
@@ -155,12 +161,12 @@ impl TextSystem {
                     let index = self.color_pixels.len() as u32;
                     let c = ColorGlyph { index, used: true, left: at.left, top: at.top, w: at.width, h: at.height };
                     self.color_glyphs.insert(color_key, c);
-                    out.push(c.quad(gx, gy, ink, byte));
+                    out.push(c.quad(gx, gy, glide, ink, byte));
                     return Placed::Other;
                 }
                 let placed = self.apple.rasterize(&mut self.scale_cx, &mut self.atlas, macos::smoothing::Job {
                     font: font_ref, key: (key.font, key.index, key.coords), coords, glyph: glyph as u16, ppem: font_size,
-                    phase_x: subpx as f32 / coretext_match::PHASES, radius, skew,
+                    phase_x: subpx as f32 / coretext_match::PHASES, shift_y: subpy as f32 / GLIDE_PHASES as f32, radius, skew,
                 });
                 match placed {
                     Rasterized::Placed(g) => {
@@ -177,19 +183,43 @@ impl TextSystem {
         };
         match entry {
             Some(a) => {
-                out.push(atlas_quad(a, fx, gy, ink, byte));
-                Placed::Atlas(a, subpx)
+                out.push(atlas_quad(a, fx, fy, ink, byte));
+                Placed::Atlas(a, [subpx, subpy])
             }
-            None => Placed::Empty(subpx),
+            None => Placed::Empty([subpx, subpy]),
         }
+    }
+
+    /// Moves the glyphs placed from here on by `glide` device px (`[x, y]`, each within half a
+    /// pixel), in at least [`GLIDE_PHASES`] steps a pixel on any gliding axis. Pixel snapping
+    /// glides a moving box between pixels; its text lays out from the box's nearest whole pixel on
+    /// `y` and passes the rest here, so the words move with the box instead of a pixel at a time.
+    /// `[0.0; 2]`, the default, places glyphs as text at rest.
+    pub(crate) fn set_glide(&mut self, glide: [f32; 2]) {
+        self.glide = glide;
     }
 }
 
-/// What [`TextSystem::push_glyph`] drew: an atlas mask or nothing at an x phase, which a
-/// later frame can replay at that phase, or a quad it must ask for again.
+/// Where a glyph with its resting pen at `at` draws at `ppem` device px, gliding by `glide`: its
+/// quad's whole-pixel pen and its x phase (sixtieths, [`coretext_match::PHASES`]) and y phase
+/// ([`GLIDE_PHASES`] a pixel). Adding the quantised glide on top of the resting pen keeps each
+/// glyph continuous at glide start/end and visits at most [`GLIDE_PHASES`] phases per axis.
+pub(super) fn place(at: [f32; 2], ppem: f32, glide: [f32; 2]) -> ([f32; 2], [u8; 2]) {
+    let (rx, r_subpx) = coretext_match::glyph_x(at[0], ppem);
+    let n = GLIDE_PHASES as f32;
+    let gx = rx * coretext_match::PHASES + r_subpx as f32 + (glide[0] * n).round() * (coretext_match::PHASES / n);
+    let fx = (gx / coretext_match::PHASES).floor();
+    let subpx = (gx - fx * coretext_match::PHASES) as u8;
+    let y = at[1].round() * n + (glide[1] * n).round();
+    let fy = (y / n).floor();
+    ([fx, fy], [subpx, (y - fy * n) as u8])
+}
+
+/// What [`TextSystem::push_glyph`] drew: an atlas mask or nothing at an x and y phase, which a
+/// later frame can replay at those phases, or a quad it must ask for again.
 pub(super) enum Placed {
-    Atlas(AtlasGlyph, u8),
-    Empty(u8),
+    Atlas(AtlasGlyph, [u8; 2]),
+    Empty([u8; 2]),
     Other,
 }
 

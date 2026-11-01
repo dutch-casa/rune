@@ -17,6 +17,8 @@ pub(super) struct GlyphKey {
     pub(super) coords: u64,
     /// The x phase in sixtieths of a pixel (`coretext_match::PHASES`).
     pub(super) subpx: u8,
+    /// How far down the mask is drawn, in quarters of a pixel (`glyph_emit::GLIDE_PHASES`).
+    pub(super) subpy: u8,
     /// The dilation radius in device px, as f32 bits.
     pub(super) dilation: u32,
     /// The CoreGraphics pipeline's stages (`macos::smoothing::Smoothing::key`).
@@ -153,8 +155,15 @@ pub(super) struct ColorGlyph {
 }
 
 impl ColorGlyph {
-    pub(super) fn quad(&self, x: f32, y: f32, ink: u16, byte: u32) -> GlyphQuad {
-        let rect = [x.round() + self.left as f32, y.round() - self.top as f32, self.w as f32, self.h as f32];
+    /// The quad for a resting pen at `[x, y]`, rounded at rest, then moved by `glide`
+    /// (the image draws filtered).
+    pub(super) fn quad(&self, x: f32, y: f32, glide: [f32; 2], ink: u16, byte: u32) -> GlyphQuad {
+        let rect = [
+            x.round() + self.left as f32 + glide[0],
+            y.round() - self.top as f32 + glide[1],
+            self.w as f32,
+            self.h as f32,
+        ];
         GlyphQuad { rect, uv: [0.0, 0.0], ink, byte, color: self.index }
     }
 }

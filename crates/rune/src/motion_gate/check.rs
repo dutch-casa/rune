@@ -14,6 +14,8 @@ use std::fmt;
 
 use crate::ElementInfo;
 
+mod loops;
+
 /// One finding kind, its threshold and what it means. The checker reads its numbers from here.
 pub struct Rule {
     pub kind: &'static str,
@@ -72,7 +74,6 @@ const GROWING: u8 = 4;
 const LIVE: u8 = 8;
 const VIRTUAL: u8 = 16;
 const TEXT: u8 = 32;
-const LOOP: u8 = 64;
 /// It or something inside it paints (a fill, words, or a leaf such as an icon) at an opacity
 /// that shows. Without it an opacity change draws nothing.
 const INK: u8 = 128;
@@ -178,7 +179,6 @@ impl Recording {
             if e.live_intent != 0 { flags |= LIVE }
             if e.virtual_extent { flags |= VIRTUAL }
             if e.role == "text" { flags |= TEXT }
-            if e.loop_phase.is_some() { flags |= LOOP }
             if ink[i] { flags |= INK }
             let track = &mut self.tracks[t];
             if track.frames.last().is_some_and(|f| f.0 == k) {
@@ -271,46 +271,7 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
 
     // Loops (a spinner's dots, a busy ring, a blinking caret) change on most frames they're
     // mounted, as one element or as siblings taking turns; their wraps are their design.
-    let changed = |a: &Snap, b: &Snap| (0..4).any(|i| (a.rect[i] - b.rect[i]).abs() > 0.01) || (a.op - b.op).abs() > 0.002;
-    let mut busy = vec![0usize; tr.len()];
-    let mut group_busy: HashMap<usize, HashSet<usize>> = HashMap::new();
-    for (i, t) in tr.iter().enumerate() {
-        for w in t.frames.windows(2) {
-            if w[1].0 == w[0].0 + 1 && changed(&w[0].1, &w[1].1) {
-                busy[i] += 1;
-                if let Some(p) = t.parent { group_busy.entry(p).or_default().insert(w[1].0); }
-            }
-        }
-    }
-    // Busy alone would take a long stream or a slow spring for a loop; a loop also comes back.
-    let periodic = |t: &Track| {
-        let turns = |v: &dyn Fn(&Snap) -> f32, eps: f32| {
-            let (mut n, mut last, mut dir) = (0, v(&t.frames[0].1), 0.0f32);
-            for f in &t.frames[1..] {
-                let x = v(&f.1);
-                if (x - last).abs() > eps {
-                    let s = (x - last).signum();
-                    if dir != 0.0 && s != dir { n += 1; }
-                    dir = s;
-                    last = x;
-                }
-            }
-            n
-        };
-        turns(&|s| s.op, 0.01) >= 4 || (0..4).any(|a| turns(&|s| s.rect[a], 0.25) >= 4)
-    };
-    let mut loops: HashSet<usize> = (0..tr.len()).filter(|&i| tr[i].frames.iter().any(|f| f.1.flags & LOOP != 0)
-        || tr[i].frames.len() >= 60 && busy[i] * 10 >= tr[i].frames.len() * 6 && periodic(&tr[i])).collect();
-    let groups: HashSet<usize> = group_busy.iter().filter(|(p, ks)| tr[**p].frames.len() >= 60 && ks.len() * 10 >= tr[**p].frames.len() * 6
-        && tr.iter().filter(|c| c.parent == Some(**p)).any(|c| c.frames.len() >= 2 && periodic(c))).map(|(p, _)| *p).collect();
-    for (i, t) in tr.iter().enumerate() {
-        if t.parent.is_some_and(|p| groups.contains(&p)) { loops.insert(i); }
-    }
-    loop {
-        let more: Vec<usize> = (0..tr.len()).filter(|i| !loops.contains(i) && tr[*i].parent.is_some_and(|p| loops.contains(&p))).collect();
-        if more.is_empty() { break; }
-        loops.extend(more);
-    }
+    let loops = loops::loops(rec);
 
     // Pops: births and deaths after the settled start, reported at the outermost element.
     let births: HashMap<usize, Vec<usize>> = tr.iter().enumerate().fold(HashMap::new(), |mut m, (i, t)| {
@@ -517,7 +478,12 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
                 if low <= s.op - rule("flicker") && fs[m].1.op >= s.op - 0.1 { back = Some(m); break; }
                 m += 1;
             }
-            if let Some(m) = back {
+            // One input taking it away and another bringing it back (a toggle pressed twice
+            // quickly) is them answered, not a flicker.
+            let answered = |m: usize| rec.inputs.iter().filter(|x| x.0 > fs[j].0 && x.0 <= fs[m].0).count() >= 2;
+            if let Some(m) = back.filter(|&m| answered(m)) {
+                j = m + 1;
+            } else if let Some(m) = back {
                 geo.push((i, Finding { kind: "flicker", element: short(&t.path), frame: fs[low_at].0,
                     detail: format!("opacity {:.2} → {:.2} → {:.2} over frames {}–{}", s.op, low, fs[m].1.op, fs[j].0, fs[m].0) }));
                 spans.push((fs[j].0, fs[m].0));
@@ -533,7 +499,7 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
             let ((_, old), (k, new)) = (&w[0], &w[1]);
             let (Some(a), Some(b)) = (t.at(k.wrapping_sub(1)), t.at(*k)) else { continue };
             if *k <= rec.start || parents.contains(&i) || new.starts_with(old.as_str()) || old.starts_with(new.as_str()) || !rec.counts_roll && ticks(old, new) { continue; }
-            if (a.flags | b.flags) & (LIVE | LOOP | EXITING | VIRTUAL) != 0 || a.op.min(b.op) < rule("text-swap") || !seen(b, size) { continue; }
+            if (a.flags | b.flags) & (LIVE | EXITING | VIRTUAL) != 0 || a.op.min(b.op) < rule("text-swap") || !seen(b, size) { continue; }
             geo.push((i, Finding { kind: "text-swap", element: short(&t.path), frame: *k, detail: format!("\"{old}\" → \"{new}\" in one frame") }));
         }
         // Opacity that steps instead of fading.
@@ -604,20 +570,7 @@ pub fn check(rec: &Recording) -> Vec<Finding> {
             out.push(Finding { kind: "never-settles", element: short(&tr[i].path), frame: n - tail, detail: format!("still moving {moved:.2} pt/frame in the last 0.5 s") });
         }
     }
-    // A loop keeps its rhythm: each frame steps its phase as the last did, through a new label.
-    for t in tr {
-        let steps: Vec<(usize, f32)> = t.frames.windows(2)
-            .filter(|w| w[1].0 == w[0].0 + 1 && !w[0].1.phase.is_nan() && !w[1].1.phase.is_nan())
-            .map(|w| (w[1].0, (w[1].1.phase - w[0].1.phase).rem_euclid(1.0)))
-            .collect();
-        if steps.len() < 4 { continue; }
-        let mut sorted: Vec<f32> = steps.iter().map(|s| s.1).collect();
-        sorted.sort_by(f32::total_cmp);
-        let usual = sorted[sorted.len() / 2];
-        if let Some(&(k, d)) = steps.iter().find(|s| (s.1 - usual).abs() > rule("loop-jump")) {
-            out.push(Finding { kind: "loop-jump", element: short(&t.path), frame: k, detail: format!("phase stepped {d:.3} where it steps {usual:.3} a frame") });
-        }
-    }
+    loops::jumps(rec, &mut out);
     // Words that leave as the same words mount: a row remounted under a new key.
     let window = rule("remount") as usize;
     let leaving = |i: usize, k: usize| {

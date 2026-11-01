@@ -179,6 +179,27 @@ def main():
     assert not jumps(sheen((1.0, 10.0), (0.0, 10.0))), "a wrap into transparent isn't a jump"
     found = jumps(sheen((1.0, 10.0), (1.0, 10.0)))
     assert len(found) == 1 and found[0]["at"] == "10", f"a wrap in sight is: {found}"
+
+    # scale-settle: a <= 100 ms pixel-snap settle right after motion isn't idle; a cold or long one is.
+    def scale_settle_trace(settle_frames, preceded_by_motion=True):
+        lines = [json.dumps({"width": 200, "height": 100, "hz": 120})]
+        lines.append(json.dumps({"m": [{"id": 1, "nm": "stage"}], "e": [[1, 10, 10, 40, 20, 1, 0, 0]], "quality": {"animating": False, "why": []}}))
+        if preceded_by_motion:
+            lines.append(json.dumps({"e": [[1, 14, 10, 64, 32, 1, 0, 1]], "tk": [[1, "scale", 1]], "quality": {"animating": True, "why": ["tracks"]}}))
+        for _ in range(settle_frames):
+            lines.append(json.dumps({"quality": {"animating": True, "why": ["scale-settle"]}}))
+        lines.append(json.dumps({"quality": {"animating": False, "why": []}}))
+        f = tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False)
+        f.write("\n".join(lines) + "\n")
+        f.close()
+        try:
+            return [x["kind"] for x in analyze.analyze(f.name)["findings"]]
+        finally:
+            os.unlink(f.name)
+
+    assert "idle-frames" not in scale_settle_trace(12, True), "100 ms scale-settle after motion"
+    assert "idle-frames" in scale_settle_trace(20, True), "overrun scale-settle"
+    assert "idle-frames" in scale_settle_trace(6, False), "cold scale-settle"
     print("ok")
 
 

@@ -102,7 +102,7 @@ fn hovering_an_edge_lights_it_instantly_and_leaving_drops_it() {
     fn view(_: &u32, _: &mut Cx<u32>) -> El {
         let paint = DiagramStyle::neutral(false);
         let s = scene("stateDiagram-v2\n  Idle --> Busy : start", &paint, Some((Hover::Edges, LIT))).unwrap();
-        col().w_full().child(s.el(&paint))
+        col().w_full().child(s.el(&paint, false))
     }
     let mut rt = Runtime::new(0u32, view, (400.0, 400.0), Env::new(false, 1.0));
     rt.frame(0.0);

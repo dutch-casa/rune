@@ -92,6 +92,14 @@
 //! blocks left open close at the end. [`render`] returns `None`, so callers can show the source,
 //! only for a diagram type it doesn't know (kanban, packet, architecture, …), when nothing reads,
 //! or past the size bounds (400 items, nesting 8 deep).
+//!
+//! **Streaming.** Each node, edge, participant, message and frame is its own element, keyed by
+//! what it is (a flowchart node by its id), so a diagram rebuilt as its source grows keeps what
+//! it has drawn. [`render_streaming`] brings each new one in on its own: nodes fade and grow in,
+//! edges and messages draw on from source to target with the arrowhead landing last, frames
+//! fade; anything already there glides to its new place. [`render`] and [`render_with_hover`]
+//! draw everything the frame it mounts. Both lay out the same source the same way, so a diagram
+//! that finishes streaming doesn't move.
 
 mod block;
 mod c4;
@@ -105,10 +113,12 @@ mod flowchart;
 mod gantt;
 mod git;
 mod hover;
+mod ink;
 mod journey;
 mod layered;
 mod layered_draw;
 mod mindmap;
+mod parts;
 mod pie;
 mod quadrant;
 mod requirement;
@@ -179,9 +189,9 @@ impl DiagramStyle {
             surface: t.bg,
             surface_border: t.separator,
             node_fill: t.card,
-            node_border: t.text.alpha(0.32),
-            line: t.text.alpha(0.55),
-            cluster_fill: t.text.alpha(0.04),
+            node_border: t.text.alpha(0.2),
+            line: t.text.alpha(0.42),
+            cluster_fill: t.text.alpha(if dark { 0.04 } else { 0.025 }),
             note_fill: oklcha(if dark { 0.3 } else { 0.95 }, 0.04, 80.0, 1.0),
             note_border: oklch(if dark { 0.4 } else { 0.85 }, 0.08, 80.0),
             font: TextStyle::new(13.0, 400.0).lh(18.0),
@@ -199,6 +209,16 @@ pub fn render(src: &str, style: &DiagramStyle) -> Option<El> {
 /// or class diagram node; an edge, or its label, lights itself and its label whatever `hover` is
 /// short of [`Hover::Off`].
 pub fn render_with_hover(src: &str, style: &DiagramStyle, hover: Hover, color: Color) -> Option<El> {
+    render_inner(src, style, hover, color, false)
+}
+
+/// [`render_with_hover`] for a source still arriving (pass only its complete lines): each node,
+/// edge and frame new since the last build comes in on its own, and the rest glide into place.
+pub fn render_streaming(src: &str, style: &DiagramStyle, hover: Hover, color: Color) -> Option<El> {
+    render_inner(src, style, hover, color, true)
+}
+
+fn render_inner(src: &str, style: &DiagramStyle, hover: Hover, color: Color, streaming: bool) -> Option<El> {
     let hover = (hover != Hover::Off).then_some((hover, color));
     let mut h = std::collections::hash_map::DefaultHasher::new();
     src.hash(&mut h);
@@ -225,7 +245,7 @@ pub fn render_with_hover(src: &str, style: &DiagramStyle, hover: Hover, color: C
             built
         }
     };
-    scene.map(|s| s.el(style))
+    scene.map(|s| s.el(style, streaming))
 }
 
 /// Whether `src` parses as a supported diagram.
@@ -264,7 +284,25 @@ pub(crate) const MAX_ITEMS: usize = 400;
 /// How deep subgraphs, composite states, frames and other blocks may nest.
 pub(crate) const MAX_DEPTH: usize = 8;
 
-pub(crate) fn parse(src: &str) -> Option<Parsed> {
+/// Whether `src`, the complete lines of a diagram still arriving, may draw once more arrive: it
+/// has no header yet (only blank lines, comments or front matter), or its header names a type
+/// this crate draws.
+pub fn may_draw(src: &str) -> bool {
+    let (_, mut lines) = cleaned(src);
+    lines.next().is_none_or(|(_, header)| KINDS.contains(&header.split_once(|c: char| c.is_whitespace() || c == ';').map_or(header, |h| h.0)))
+}
+
+/// Every diagram type [`parse`] reads, by its header's first word.
+const KINDS: &[&str] = &[
+    "graph", "flowchart", "sequenceDiagram", "stateDiagram", "stateDiagram-v2", "classDiagram", "erDiagram", "gantt", "pie",
+    "mindmap", "timeline", "journey", "gitGraph", "gitGraph:", "quadrantChart", "xychart-beta", "xychart", "sankey-beta",
+    "sankey", "block-beta", "block", "requirementDiagram", "C4Context", "C4Container", "C4Component", "C4Dynamic",
+    "C4Deployment",
+];
+
+/// `src`'s front-matter title, and its lines with their indents, without comments, directives
+/// and front matter.
+fn cleaned(src: &str) -> (Option<String>, std::iter::Peekable<std::vec::IntoIter<(usize, &str)>>) {
     let mut cleaned = Vec::new();
     let mut in_directive = false;
     for raw in src.lines() {
@@ -312,6 +350,11 @@ pub(crate) fn parse(src: &str) -> Option<Parsed> {
             }
         }
     }
+    (fm_title, lines)
+}
+
+pub(crate) fn parse(src: &str) -> Option<Parsed> {
+    let (fm_title, mut lines) = cleaned(src);
     let (_, header) = lines.next()?;
     let (kind, rest) = header.split_once(|c: char| c.is_whitespace() || c == ';').unwrap_or((header, ""));
     let (indents, body): (Vec<usize>, Vec<&str>) = lines.unzip();

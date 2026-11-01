@@ -6,6 +6,7 @@ use crate::pixels::ImageAtlas;
 use crate::text::{ATLAS_SIZE, Atlas};
 
 mod backdrop_blur;
+mod first_use;
 pub(crate) mod layer_blur;
 mod layers;
 mod metallib;
@@ -15,6 +16,7 @@ pub(crate) mod surface_alpha;
 pub(crate) mod translucency;
 mod upload;
 pub use backdrop_blur::MAX_BACKDROP_BLURS;
+pub use first_use::precompiled_misses;
 pub use layers::LayerStats;
 
 pub const KIND_RECT: f32 = 0.0;
@@ -393,6 +395,33 @@ impl Gpu {
             Some(s) if translucent && !pick.from_env() => crate::render::translucency::prefer(&instance, s, &pick),
             _ => pick.adapter,
         };
+        match Self::device_on(&adapter, wanted) {
+            Ok((device, queue)) => Ok(Gpu { instance, adapter, device, queue }),
+            // A driver that can't make a device (a broken integrated GPU on a hybrid laptop)
+            // leaves the window to the next adapter that presents to its surface.
+            Err(error) => {
+                let first = adapter.get_info();
+                let others = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()))
+                    .into_iter()
+                    .filter(|other| {
+                        let info = other.get_info();
+                        (info.name != first.name || info.backend != first.backend)
+                            && surface.is_none_or(|s| other.is_surface_supported(s))
+                            && (!translucent || surface.is_none_or(|s| crate::render::translucency::mode(s, other).is_some()))
+                    });
+                for other in others {
+                    if let Ok((device, queue)) = Self::device_on(&other, wanted) {
+                        eprintln!("rune: {} ({:?}) made no device ({error}); using {}", first.name, first.backend, other.get_info().name);
+                        return Ok(Gpu { instance, adapter: other, device, queue });
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn device_on(adapter: &wgpu::Adapter, wanted: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), String> {
         let optional_features = wgpu::Features::TIMESTAMP_QUERY | wanted;
         #[cfg(target_os = "macos")]
         let optional_features = optional_features | wgpu::Features::PASSTHROUGH_SHADERS;
@@ -418,7 +447,7 @@ impl Gpu {
                     .using_alignment(adapter_limits)
             }
         };
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("rune"),
             required_features,
             required_limits,
@@ -426,8 +455,7 @@ impl Gpu {
             memory_hints: wgpu::MemoryHints::Performance,
             trace: Default::default(),
         }))
-        .map_err(|error| format!("no GPU device: {error}"))?;
-        Ok(Gpu { instance, adapter, device, queue })
+        .map_err(|error| format!("no GPU device: {error}"))
     }
 
     #[cfg(target_arch = "wasm32")]
@@ -453,18 +481,50 @@ impl Gpu {
     /// 40 ms on a Mac's first launch after an install or update). Indirect draws a compositor
     /// records on Rune's device still work; wgpu just doesn't check their argument buffers.
     pub fn instance() -> wgpu::Instance {
-        #[cfg(all(target_os = "macos", feature = "metal-backend"))]
+        #[cfg(all(target_vendor = "apple", feature = "metal-backend"))]
         if crate::gpu::metal::enabled() { return crate::gpu::metal::instance(); }
         Self::wgpu_instance()
     }
 
-    /// wgpu's own backends, whatever `RUNE_GPU_BACKEND` says.
+    /// `instance`, or wgpu's when the native Metal backend is only the default and lacks one of
+    /// the features a compositor wants (`Compositor::features`).
+    pub(crate) fn instance_for(wanted: wgpu::Features) -> wgpu::Instance {
+        if crate::gpu::backend::wgpu_for(wanted) { Self::wgpu_instance() } else { Self::instance() }
+    }
+
+    /// wgpu's own backends, whatever `RUNE_GPU_BACKEND` says: DX12 alone on Windows: it's the backend that composites transparent surfaces, and a
+    /// Vulkan instance loads every GPU's Vulkan driver, where a broken one (Intel's, on a hybrid
+    /// laptop) crashed the process before its first window (Hex #662). Vulkan only when no DX12
+    /// adapter exists.
+    #[cfg(target_os = "windows")]
     fn wgpu_instance() -> wgpu::Instance {
         let _serial = GPU_INIT.lock().unwrap_or_else(|e| e.into_inner());
+        let dx12 = Self::wgpu_instance_on(wgpu::Backends::DX12);
+        if !pollster::block_on(dx12.enumerate_adapters(wgpu::Backends::DX12)).is_empty() {
+            dx12
+        } else {
+            eprintln!("rune: no DX12 adapter; drawing with Vulkan");
+            Self::wgpu_instance_on(wgpu::Backends::VULKAN)
+        }
+    }
+
+    /// wgpu's own backends, whatever `RUNE_GPU_BACKEND` says.
+    #[cfg(not(target_os = "windows"))]
+    fn wgpu_instance() -> wgpu::Instance {
+        let _serial = GPU_INIT.lock().unwrap_or_else(|e| e.into_inner());
+        Self::wgpu_instance_on(wgpu::Backends::all())
+    }
+
+    fn wgpu_instance_on(backends: wgpu::Backends) -> wgpu::Instance {
         let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = backends;
         descriptor.flags.remove(wgpu::InstanceFlags::VALIDATION_INDIRECT_CALL);
         // An HWND's DXGI swapchain is opaque only; DirectComposition composites alpha on every GPU.
         descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        // FXC ships with Windows (d3dcompiler_47.dll in System32). wgpu's default looks for
+        // dxcompiler.dll on PATH, where another app's incompatible copy crashes the first
+        // shader compile (Hex #587).
+        descriptor.backend_options.dx12.shader_compiler = wgpu::Dx12Compiler::Fxc;
         wgpu::Instance::new(descriptor)
     }
 
@@ -482,8 +542,9 @@ impl Gpu {
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     fn for_surface_from<'w>(early: Option<(Gpu, Renderer)>, wanted: wgpu::Features, translucent: bool,
         surface: impl FnOnce(&wgpu::Instance) -> Result<wgpu::Surface<'w>, String>) -> Result<(Gpu, wgpu::Surface<'w>, Option<Renderer>), String> {
-        let Some((early, renderer)) = early else {
-            let instance = Self::instance();
+        // A prewarmed native Metal GPU lacking a wanted feature is dropped before it makes a surface.
+        let Some((early, renderer)) = early.filter(|(gpu, _)| crate::gpu::backend::serves(&gpu.device, wanted)) else {
+            let instance = Self::instance_for(wanted);
             let surface = surface(&instance)?;
             return Ok((Self::try_for(instance, Some(&surface), wanted, translucent)?, surface, None));
         };
@@ -506,8 +567,28 @@ impl Gpu {
 /// if none opens, it's dropped. Calling again does nothing. Only on macOS, where any Metal adapter
 /// presents to any window; elsewhere the window's surface decides the adapter, and this does
 /// nothing.
+///
+/// It starts on the backend the app draws with when nothing chose one: Rune's native Metal
+/// backend with the `metal-backend` feature (on by default), wgpu without it. An app that opts
+/// out with `GpuBackend::Wgpu` should call `prewarm_gpu_on(GpuBackend::Wgpu)` instead, so the
+/// thread starts on wgpu rather than on the native backend and starting over.
 pub fn prewarm_gpu() {
     prewarm::start();
+}
+
+/// Chooses `backend` (as `App::gpu_backend` does), then starts `prewarm_gpu`'s thread on it, so an
+/// app that picks a backend other than the default never prewarms on the default and restarts.
+/// `App::gpu_backend` with the same backend afterwards changes nothing. On iOS it only chooses: call
+/// it before the first `embed::LayerHost` (and `embed::prewarm`). Elsewhere, or without
+/// `metal-backend`, it is `prewarm_gpu`.
+pub fn prewarm_gpu_on(backend: crate::GpuBackend) {
+    choose_then_start(backend, crate::gpu::backend::choose, prewarm::start);
+}
+
+/// `choose` before `start`: a thread started first would run on the old backend.
+fn choose_then_start(backend: crate::GpuBackend, choose: impl FnOnce(crate::GpuBackend), start: impl FnOnce()) {
+    choose(backend);
+    start();
 }
 
 /// Starts `prewarm_gpu`'s thread over if it's working, for a backend chosen after it started.
@@ -1123,6 +1204,16 @@ pub fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) -
 mod backdrop_tests;
 
 
+#[cfg(test)]
+mod prewarm_order_tests {
+    #[test]
+    fn prewarm_gpu_on_chooses_before_it_starts() {
+        let log = std::cell::RefCell::new(Vec::new());
+        super::choose_then_start(crate::GpuBackend::Metal, |b| log.borrow_mut().push(format!("choose {b:?}")), || log.borrow_mut().push("start".into()));
+        assert_eq!(*log.borrow(), ["choose Metal", "start"]);
+    }
+}
+
 /// `prewarm_gpu` and how a window picks it up, on a bare Metal layer (no window server needed).
 #[cfg(all(test, target_os = "macos"))]
 mod prewarm_tests {
@@ -1206,5 +1297,29 @@ mod prewarm_tests {
         let renderer = Renderer::new(&early.device, wgpu::TextureFormat::Bgra8UnormSrgb);
         let (_, _surface, kept) = Gpu::for_surface_from(Some((early, renderer)), wgpu::Features::empty(), false, |i| surface(i, &layer)).expect("a GPU");
         assert!(kept.is_some(), "a suitable prewarmed device keeps its renderer");
+    }
+
+    /// A compositor wanting a feature the native Metal backend lacks gets wgpu's device, when
+    /// Metal is only the default, with the prewarmed native GPU dropped before any surface.
+    #[cfg(feature = "metal-backend")]
+    #[test]
+    fn a_compositor_wanting_what_the_native_backend_lacks_draws_with_wgpu() {
+        if !crate::gpu::metal::enabled() || std::env::var_os("RUNE_GPU_BACKEND").is_some() {
+            return eprintln!("skipped: the native backend isn't the default here");
+        }
+        let early = Gpu::headless();
+        assert!(crate::gpu::metal::raw_device(&early.device).is_some());
+        let renderer = Renderer::new(&early.device, wgpu::TextureFormat::Bgra8UnormSrgb);
+        let layer = layer();
+        let mut made = 0;
+        let wanted = wgpu::Features::IMMEDIATES;
+        let (gpu, _surface, renderer) = Gpu::for_surface_from(Some((early, renderer)), wanted, false, |i| { made += 1; surface(i, &layer) })
+            .expect("a wgpu GPU");
+        assert_eq!(made, 1);
+        assert!(renderer.is_none());
+        assert!(crate::gpu::metal::raw_device(&gpu.device).is_none(), "wgpu's device");
+        assert!(gpu.device.features().contains(wanted));
+        assert!(!crate::gpu::backend::serves(&Gpu::headless().device, wanted));
+        assert!(crate::gpu::backend::serves(&Gpu::headless().device, wgpu::Features::TIMESTAMP_QUERY));
     }
 }

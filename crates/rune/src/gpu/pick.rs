@@ -114,7 +114,7 @@ fn log(pick: Pick, adapters: Option<usize>) -> Pick {
             let info = pick.adapter.get_info();
             let pci = if info.device_pci_bus_id.is_empty() { String::new() } else { format!(", {}", info.device_pci_bus_id) };
             let compositor = pick.compositor.as_deref().map(|c| format!("; compositor on {c}")).unwrap_or_default();
-            eprintln!("rune: GPU {:?} ({:?}, {:?}{pci}): {}{compositor}", info.name, info.backend, info.device_type, pick.reason.describe());
+            eprintln!("rune: GPU {:?} ({}; {:?}, {:?}{pci}): {}{compositor}", info.name, crate::gpu::backend::label(), info.backend, info.device_type, pick.reason.describe());
         });
     }
     pick
