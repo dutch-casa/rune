@@ -331,8 +331,24 @@ def analyze(path, script=None):
         by_why = defaultdict(list)
         for k, why in idle:
             by_why[why].append(k)
+        settle_cap = math.ceil(120.0 / dt_ms)
         for why, ks in by_why.items():
             rs = runs(ks)
+            # A scaled layer's 100 ms sub-pixel settle eases `r` onto the device grid after motion
+            # while `self.drawn` (`r_exact`) is already still; flag only cold or overrun runs.
+            if why == ("scale-settle",):
+                bad_rs = []
+                for a, b in rs:
+                    p = a - 1
+                    while p >= 0 and tuple(frames[p].get("quality", {}).get("why", [])) == ("scale-settle",):
+                        p -= 1
+                    warm = (p >= 0 and animating[p]) or (p + 1 < a and changed_by_frame[p + 1])
+                    if not warm or b - p > settle_cap:
+                        bad_rs.append((a, b))
+                rs = bad_rs
+                ks = [k for a, b in rs for k in range(a, b + 1)]
+                if not ks:
+                    continue
             findings.append(dict(kind="idle-frames", element="(frame)", frames=len(ks), longest=max(b - a + 1 for a, b in rs),
                                  at=fmt_runs(rs), detail=f"{len(ks)} frames animating ({'+'.join(why) or '?'}) with no traced change"))
     last_input = max((k for k, _ in inputs), default=0)

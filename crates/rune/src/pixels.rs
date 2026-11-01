@@ -91,27 +91,64 @@ impl Pixels {
 }
 
 /// Where an image of `size` texels draws in `rect` ([x, y, w, h], device pixels) and which window
-/// of it shows, as fractions [x0, y0, x1, y1]. `None` stretches; `Fit` letterboxes on whole pixels;
-/// `Fill` keeps the rect and crops the overflow. Spare space and overflow split by `place`'s
-/// anchor (centred by default); an unscaled place draws one texel per pixel and crops or leaves
-/// the rest empty.
-pub(crate) fn fit(fit: Option<crate::SurfaceFit>, place: crate::native_surface::place::SurfacePlace, rect: [f32; 4], size: (u32, u32)) -> ([f32; 4], [f32; 4]) {
+/// of it shows, as fractions [x0, y0, x1, y1]. `None` stretches; `Fit` letterboxes (on whole
+/// pixels at unscaled rest, continuous while scaled); `Fill` keeps the rect and crops the
+/// overflow. Spare space and overflow split by `place`'s anchor (centred by default); an unscaled
+/// place draws one texel per pixel and crops or leaves the rest empty.
+#[cfg(test)]
+pub(crate) fn fit(
+    fit: Option<crate::SurfaceFit>,
+    place: crate::native_surface::place::SurfacePlace,
+    rect: [f32; 4],
+    size: (u32, u32),
+) -> ([f32; 4], [f32; 4]) {
+    fit_in(fit, place, rect, size, 1.0)
+}
+
+pub(crate) fn fit_in(
+    fit: Option<crate::SurfaceFit>,
+    place: crate::native_surface::place::SurfacePlace,
+    rect: [f32; 4],
+    size: (u32, u32),
+    snap_weight: f32,
+) -> ([f32; 4], [f32; 4]) {
     let whole = [0.0, 0.0, 1.0, 1.0];
     let [x, y, w, h] = rect;
     let (iw, ih) = (size.0 as f32, size.1 as f32);
     if fit.is_none() || iw <= 0.0 || ih <= 0.0 || w <= 0.0 || h <= 0.0 { return (rect, whole); }
     let [kx, ky] = place.share();
+    let u = if (w - w.round()).abs() < 1.0 / 512.0 && (h - h.round()).abs() < 1.0 / 512.0 {
+        snap_weight.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let blend = |exact: [f32; 4], snapped: [f32; 4]| {
+        if u <= 0.0 {
+            exact
+        } else if u >= 1.0 {
+            snapped
+        } else {
+            std::array::from_fn(|i| exact[i] + (snapped[i] - exact[i]) * u)
+        }
+    };
     if place.unscaled {
         let (dw, dh) = (iw.min(w), ih.min(h));
         let (sx, sy) = (dw / iw, dh / ih);
         let ((x0, x1), (y0, y1)) = (window(sx, kx), window(sy, ky));
-        let at = [x + ((w - dw) * kx).round(), y + ((h - dh) * ky).round(), dw, dh];
-        return (at, [x0, y0, x1, y1]);
+        let exact = [x + (w - dw) * kx, y + (h - dh) * ky, dw, dh];
+        let snapped = [x + ((w - dw) * kx).round(), y + ((h - dh) * ky).round(), dw, dh];
+        return (blend(exact, snapped), [x0, y0, x1, y1]);
     }
     if fit == Some(crate::SurfaceFit::Fit) {
         let k = (w / iw).min(h / ih);
-        let (dw, dh) = ((iw * k).round().clamp(1.0, w), (ih * k).round().clamp(1.0, h));
-        return ([x + ((w - dw) * kx).round(), y + ((h - dh) * ky).round(), dw, dh], whole);
+        let (dw, dh) = ((iw * k).clamp(1.0, w), (ih * k).clamp(1.0, h));
+        let exact = [x + (w - dw) * kx, y + (h - dh) * ky, dw, dh];
+        if u <= 0.0 {
+            return (exact, whole);
+        }
+        let (sw, sh) = ((iw * k).round().clamp(1.0, w), (ih * k).round().clamp(1.0, h));
+        let snapped = [x + ((w - sw) * kx).round(), y + ((h - sh) * ky).round(), sw, sh];
+        return (blend(exact, snapped), whole);
     }
     let k = (w / iw).max(h / ih);
     let (sx, sy) = (w / (iw * k), h / (ih * k));

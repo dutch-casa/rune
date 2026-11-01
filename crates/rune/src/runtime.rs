@@ -97,7 +97,7 @@ mod key_index;
 mod system_settings;
 #[path = "runtime/commit/prune.rs"]
 mod prune;
-pub(crate) use blend::{glyph, glyph_uv_page, premul};
+pub(crate) use blend::{glyph, icon_inst, premul};
 
 #[path = "runtime/input/focus.rs"]
 mod focus;

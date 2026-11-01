@@ -7,7 +7,7 @@ O=${1:-target/motion-audit}
 mkdir -p "$O"
 cargo build --release -p todo -p settings -p kit-gallery -p odometer
 cargo build --release -p rune-kit --example shell
-cargo build --release -p rune --example growth_reorder --example keep_stuck --example sticky --example scroll_keys --example scroll_anchor --example text_glide
+cargo build --release -p rune --example growth_reorder --example keep_stuck --example sticky --example scroll_keys --example scroll_anchor --example text_glide --example one_snap
 B=${CARGO_TARGET_DIR:-target}/release
 SH=$B/examples/shell
 GR=$B/examples/growth_reorder
@@ -53,4 +53,5 @@ run sticky-scroll     1.6 $B/examples/sticky --script crates/rune/examples/stick
 run scroll-keys       3.2 $B/examples/scroll_keys --script $S/scroll-keys.json
 run scroll-anchor     3.4 $B/examples/scroll_anchor --script $S/scroll-anchor.json
 run text-glide        3.8 $B/examples/text_glide --script $S/text-glide.json
+run one-snap          4.4 $B/examples/one_snap --script $S/one-snap.json
 ls "$O"

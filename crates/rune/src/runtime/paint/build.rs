@@ -273,7 +273,8 @@ impl<S: 'static> Runtime<S> {
             // counts as moving until it holds still, then rasterizes crisp at its resting scale.
             let has_live_scale = n.live.iter().any(|b| b.property == crate::live::Property::Scale);
             let tracked_scale = if has_live_scale { static_k * p.transform.scale.x } else { static_k };
-            let scale_settling = if tracked_scale != 1.0 || has_live_scale || self.static_scales.contains_key(&n.id) {
+            let untracked_scale = !n.scale_track || has_live_scale;
+            let scale_settling = if untracked_scale && (tracked_scale != 1.0 || has_live_scale || self.static_scales.contains_key(&n.id)) {
                 let t = self.t;
                 let seen = self.static_scales.entry(n.id).or_insert((tracked_scale, f64::NEG_INFINITY, false));
                 if self.settled {
@@ -380,8 +381,16 @@ impl<S: 'static> Runtime<S> {
                     && r_exact[3].max(r_exact[1]) >= clip[1].max(vp[1]) - m && r_exact[1] <= clip[3].min(vp[3]) + m
             });
             let unscaled = (sc - 1.0).abs() <= 1e-5 && anchor == anchor_to;
-            let snap_layer = if can_snap && (own_sc - 1.0).abs() > 1e-5 { self.pixel_snap.layer(n.id, (r_exact, raw_edges.map(snap_px)), rigid, pinh.in_cache || n.vis.cache) } else { pinh.snap.layer };
             let animating = p.flags & (rune_motion::flags::ANIMATED | rune_motion::flags::ANCESTOR_ANIMATED) != 0;
+            // A node with its own scale, or an anchored overlay inheriting its anchor's zoom after
+            // `anchored_inh` cleared `snap.layer`, heads a scaled snap layer so its subtree snaps
+            // onto whole pixels once still.
+            let opens_snap_layer = (own_sc - 1.0).abs() > 1e-5 || (n.above.is_some() && !unscaled);
+            let snap_layer = if can_snap && opens_snap_layer {
+                self.pixel_snap.layer(n.id, (r_exact, raw_edges.map(snap_px)), rigid, pinh.in_cache || n.vis.cache)
+            } else {
+                pinh.snap.layer
+            };
             let rest = if snaps && animating { self.scene.rest(n.id) } else { None };
             let gliding = snaps && (rest.is_some() || !unscaled);
             let (r, snap_rest) = if !snaps {
@@ -755,7 +764,7 @@ impl<S: 'static> Runtime<S> {
             let input_caret = n.input.as_ref().filter(|input| input.edit.focused && self.can_focus(i))
                 .filter(|_| !self.flights.iter().any(|f| n.key.as_deref() == Some(&f.source_key)
                     && f.alphas(f.destination, now, self.reduced_motion).0 > 0.0))
-                .and_then(|_| input_caret(n, r, sc, s, &mut self.input_scroll));
+                .and_then(|_| input_caret(n, r, sc, s, gliding, &mut self.input_scroll));
             if let Some((_, area)) = input_caret
                 && n.input.as_ref().is_some_and(|input| !input.edit.is_secure()) { self.ime_area = Some(area); }
             else if n.ime_cursor && self.ime_area.is_none() && self.allowed(i) && !self.subtree_exiting(i) { self.ime_area = Some(app_ime::area(r, s)); }
@@ -1060,6 +1069,8 @@ impl<S: 'static> Runtime<S> {
                     i,
                     paint_content::LeafBox {
                         r,
+                        r_exact,
+                        raw_size: [raw_edges[2] - raw_edges[0], raw_edges[3] - raw_edges[1]],
                         radii,
                         sc,
                         o,
